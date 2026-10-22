@@ -1,0 +1,49 @@
+const API_CONFIG = {
+    BASE_URL: 'https://hindumatrimony.org.in/api',
+    TIMEOUT: 60000,
+    ENDPOINTS: {
+        SIGNUP: '/signup',
+        SIGNIN: '/signin',
+        LOGOUT: '/logout',
+        MEMBER_DASHBOARD: '/member/dashboard',
+        MEMBER_PROFILE: (id) => `/member/public-profile/${id}`,
+        MEMBER_PROFILE_SETTINGS: '/member/profile-settings',
+        MEMBER_LISTING: '/member/member-listing',
+        EXPRESS_INTEREST: '/member/express-interest',
+        INTEREST_ACCEPT: '/member/interest-accept',
+        INTEREST_REJECT: '/member/interest-reject',
+        MY_SHORTLISTS: '/member/my-shortlists',
+        ADD_TO_SHORTLIST: '/member/add-to-shortlist',
+        REMOVE_FROM_SHORTLIST: '/member/remove-from-shortlist',
+        IGNORED_USER_LIST: '/member/ignored-user-list',
+        ADD_TO_IGNORE_LIST: '/member/add-to-ignore-list',
+        REMOVE_FROM_IGNORED_LIST: '/member/remove-from-ignored-list',
+        REPORT_MEMBER: '/member/report-member',
+        // Member filter & settings endpoints
+        MEMBER_INTRODUCTION_UPDATE: '/member/introduction-update',
+        MEMBER_BASIC_INFO_UPDATE: '/member/basic-info/update',
+        MEMBER_ADDRESS_UPDATE: '/member/address/update',
+        MEMBER_EDUCATION_STATUS_UPDATE: '/member/education-status/update',
+        MEMBER_CAREER_STATUS_UPDATE: '/member/career-status/update',
+        MEMBER_PHYSICAL_ATTRIBUTES_UPDATE: '/member/physical-attributes/update',
+        MEMBER_LANGUAGE_UPDATE: '/member/language/update',
+        MEMBER_HOBBIES_UPDATE: '/member/hobbies/update',
+        MEMBER_ATTITUDE_BEHAVIOR_UPDATE: '/member/attitude-behavior/update',
+        MEMBER_RESIDENCY_INFO_UPDATE: '/member/residency-info/update',
+        MEMBER_SPIRITUAL_BACKGROUND_UPDATE: '/member/spiritual-background/update',
+        MEMBER_LIFESTYLE_UPDATE: '/member/life-style/update',
+        MEMBER_ASTRONOMIC_UPDATE: '/member/astronomic/update',
+        MEMBER_FAMILY_INFO_UPDATE: '/member/family-info/update',
+        MEMBER_PARTNER_EXPECTATION_UPDATE: '/member/partner-expectation/update',
+        MEMBER_CHANGE_PASSWORD: '/member/change/password',
+        MEMBER_CONTACT_INFO_UPDATE: '/member/contact-info/update',
+        MEMBER_ACCOUNT_DEACTIVATE: '/member/account/deactivate',
+        MEMBER_ACCOUNT_DELETE: '/member/account/delete',
+    },
+};
+
+export const BASE_URL = API_CONFIG.BASE_URL;
+export const TIMEOUT = API_CONFIG.TIMEOUT;
+export const ENDPOINTS = API_CONFIG.ENDPOINTS;
+
+export default API_CONFIG;

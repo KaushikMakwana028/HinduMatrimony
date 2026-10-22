@@ -1,61 +1,77 @@
 import React from "react";
-import { Text, View } from "react-native";
+import { View, StyleSheet, Platform } from "react-native";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { Ionicons } from "@expo/vector-icons";
 
 import HomeScreen from "../screens/HomeScreen";
 import ActiveMembersScreen from "../screens/ActiveMembersScreen";
 import MyInterestScreen from "../screens/MyInterestScreen";
 import ShortlistScreen from "../screens/ShortlistScreen";
 import ProfileScreen from "../screens/ProfileScreen";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { COLORS, FONTS } from "../theme";
 
 const Tab = createBottomTabNavigator();
 
-const PRIMARY = "#F9407F";
-const INACTIVE = "#9C8E88";
-
-const ICONS = {
-    Home: "🏠",
-    ActiveMembers: "👥",
-    MyInterest: "💖",
-    Shortlist: "⭐",
-    Profile: "👤",
+const TAB_ICONS = {
+    Home: {
+        active: "home",
+        inactive: "home-outline",
+    },
+    ActiveMembers: {
+        active: "people",
+        inactive: "people-outline",
+    },
+    MyInterest: {
+        active: "heart",
+        inactive: "heart-outline",
+    },
+    Shortlist: {
+        active: "star",
+        inactive: "star-outline",
+    },
+    Profile: {
+        active: "person",
+        inactive: "person-outline",
+    },
 };
 
-function TabIcon({ name, focused }) {
+function TabBarIcon({ routeName, focused, color }) {
+    const icons = TAB_ICONS[routeName] || { active: "ellipse", inactive: "ellipse-outline" };
+    const iconName = focused ? icons.active : icons.inactive;
+
     return (
-        <View style={{ alignItems: "center", justifyContent: "center" }}>
-            <Text style={{ fontSize: 20, opacity: focused ? 1 : 0.55 }}>
-                {ICONS[name]}
-            </Text>
+        <View style={styles.iconContainer}>
+            <Ionicons name={iconName} size={24} color={color} />
         </View>
     );
 }
 
 export default function MainTabs() {
     const insets = useSafeAreaInsets();
+    const bottomPadding = Math.max(insets.bottom, 10);
 
     return (
         <Tab.Navigator
             screenOptions={({ route }) => ({
                 headerShown: false,
-                tabBarActiveTintColor: PRIMARY,
-                tabBarInactiveTintColor: INACTIVE,
-                tabBarStyle: {
-                    height: 56 + insets.bottom,
-                    paddingBottom: Math.max(insets.bottom, 8),
-                    paddingTop: 6,
-                    borderTopWidth: 1,
-                    borderTopColor: "#E8DDD5",
-                    backgroundColor: "#FFFFFF",
-                },
-                tabBarLabelStyle: {
-                    fontFamily: "Poppins_500Medium",
-                    fontSize: 11,
-                    marginTop: 2,
-                },
-                tabBarIcon: ({ focused }) => (
-                    <TabIcon name={route.name} focused={focused} />
+                tabBarActiveTintColor: COLORS.primary,
+                tabBarInactiveTintColor: "#9E8E87",
+                tabBarStyle: [
+                    styles.tabBar,
+                    {
+                        height: 62 + bottomPadding,
+                        paddingBottom: bottomPadding,
+                    },
+                ],
+                tabBarLabelStyle: styles.tabBarLabel,
+                tabBarItemStyle: styles.tabBarItem,
+                tabBarIcon: ({ focused, color }) => (
+                    <TabBarIcon
+                        routeName={route.name}
+                        focused={focused}
+                        color={color}
+                    />
                 ),
             })}
         >
@@ -72,7 +88,7 @@ export default function MainTabs() {
             <Tab.Screen
                 name="MyInterest"
                 component={MyInterestScreen}
-                options={{ tabBarLabel: "Interest" }}
+                options={{ tabBarLabel: "Interests" }}
             />
             <Tab.Screen
                 name="Shortlist"
@@ -87,3 +103,39 @@ export default function MainTabs() {
         </Tab.Navigator>
     );
 }
+
+const styles = StyleSheet.create({
+    tabBar: {
+        backgroundColor: "#FFFFFF",
+        borderTopWidth: 1,
+        borderTopColor: "#EDE3DC",
+        paddingTop: 8,
+        ...Platform.select({
+            ios: {
+                shadowColor: "#2B1B17",
+                shadowOffset: { width: 0, height: -3 },
+                shadowOpacity: 0.06,
+                shadowRadius: 10,
+            },
+            android: {
+                elevation: 12,
+            },
+        }),
+    },
+    tabBarItem: {
+        paddingVertical: 2,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    tabBarLabel: {
+        fontFamily: FONTS.medium,
+        fontSize: 11,
+        marginTop: 3,
+        letterSpacing: 0.2,
+    },
+    iconContainer: {
+        alignItems: "center",
+        justifyContent: "center",
+        height: 26,
+    },
+});

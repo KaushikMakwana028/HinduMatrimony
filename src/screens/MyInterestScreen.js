@@ -24,6 +24,7 @@ export default function MyInterestScreen() {
                 keyExtractor={(item) => item.id}
                 contentContainerStyle={{ padding: 20 }}
                 showsVerticalScrollIndicator={false}
+                keyboardShouldPersistTaps="handled"
                 renderItem={({ item }) => {
                     const accepted = item.status === "Accepted";
                     return (

@@ -1,61 +1,61 @@
-import React, { useState } from "react";
+import React, { useState, useRef } from "react";
 import {
     View,
     Text,
     TextInput,
     TouchableOpacity,
     StyleSheet,
-    KeyboardAvoidingView,
-    Platform,
-    ScrollView,
     Alert,
     Modal,
+    ActivityIndicator,
 } from "react-native";
+import { useAuth } from "../contexts/AuthContext";
+import KeyboardAwareScrollView from "../components/KeyboardAwareScrollView";
+import { COLORS, FONTS } from "../theme";
 
-const COLORS = {
-    primary: "#F9407F",
-    primaryLight: "#FB6D9B",
-    background: "#FFF8F0",
-    surface: "#FFFFFF",
-    text: "#2B1B17",
-    textLight: "#7A6A65",
-    border: "#E8DDD5",
-    error: "#D32F2F",
-};
-
-const FONTS = {
-    regular: "Poppins_400Regular",
-    medium: "Poppins_500Medium",
-    semiBold: "Poppins_600SemiBold",
-    bold: "Poppins_700Bold",
-};
-
-const ON_BEHALF_OPTIONS = [
-    "My Self",
-    "My Daughter",
-    "My Son",
-    "My Sister",
-    "My Brother",
-    "My Relative",
-    "My Friend",
+const ON_BEHALF_LIST = [
+    { label: "My Self", id: "1" },
+    { label: "My Daughter", id: "2" },
+    { label: "My Son", id: "3" },
+    { label: "My Sister", id: "4" },
+    { label: "My Brother", id: "5" },
+    { label: "My Relative", id: "6" },
+    { label: "My Friend", id: "7" },
 ];
 
 const GENDER_OPTIONS = ["Male", "Female"];
 
+function formatDobForApi(dob) {
+    if (!dob) return "";
+    if (/^\d{4}-\d{2}-\d{2}$/.test(dob)) return dob;
+    const parts = dob.split("/");
+    if (parts.length === 3) {
+        const [d, m, y] = parts;
+        return `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
+    }
+    return dob;
+}
+
 export default function SignupScreen({ navigation }) {
+    const { register } = useAuth();
+    const scrollViewRef = useRef(null);
+
     const [form, setForm] = useState({
         onBehalf: "",
+        onBehalfId: "1",
         firstName: "",
         lastName: "",
         gender: "",
         dob: "",
         email: "",
+        phone: "",
         password: "",
         confirmPassword: "",
         agreed: false,
     });
     const [errors, setErrors] = useState({});
     const [picker, setPicker] = useState(null); // "onBehalf" | "gender"
+    const [loading, setLoading] = useState(false);
 
     const update = (key, value) => {
         setForm((p) => ({ ...p, [key]: value }));
@@ -64,231 +64,343 @@ export default function SignupScreen({ navigation }) {
 
     const validate = () => {
         const e = {};
-        if (!form.onBehalf) e.onBehalf = "Please select";
+        if (!form.onBehalf) e.onBehalf = "Please select profile relation";
         if (!form.firstName.trim()) e.firstName = "First name is required";
         if (!form.lastName.trim()) e.lastName = "Last name is required";
         if (!form.gender) e.gender = "Please select gender";
-        if (!form.dob.trim()) e.dob = "Date of birth is required";
-        else if (!/^\d{2}\/\d{2}\/\d{4}$/.test(form.dob))
+        if (!form.dob.trim()) {
+            e.dob = "Date of birth is required";
+        } else if (!/^\d{2}\/\d{2}\/\d{4}$/.test(form.dob)) {
             e.dob = "Use format DD/MM/YYYY";
-        if (!form.email.trim()) e.email = "Email is required";
-        else if (!/^\S+@\S+\.\S+$/.test(form.email)) e.email = "Invalid email";
-        if (!form.password) e.password = "Password is required";
-        else if (form.password.length < 6) e.password = "Minimum 6 characters";
-        if (!form.confirmPassword)
+        }
+
+        const emailTrimmed = form.email.trim();
+        if (!emailTrimmed) {
+            e.email = "Email is required";
+        } else if (!/^\S+@\S+\.\S+$/.test(emailTrimmed)) {
+            e.email = "Invalid email address";
+        }
+
+        const cleanPhone = form.phone.replace(/\D/g, "");
+        if (!cleanPhone) {
+            e.phone = "Phone number is required";
+        } else if (cleanPhone.length < 10) {
+            e.phone = "Enter a valid 10-digit phone number";
+        }
+
+        if (!form.password) {
+            e.password = "Password is required";
+        } else if (form.password.length < 8) {
+            e.password = "Password must be at least 8 characters";
+        }
+
+        if (!form.confirmPassword) {
             e.confirmPassword = "Please confirm your password";
-        else if (form.password !== form.confirmPassword)
+        } else if (form.password !== form.confirmPassword) {
             e.confirmPassword = "Passwords do not match";
-        if (!form.agreed) e.agreed = "You must accept the terms & conditions";
+        }
+
+        if (!form.agreed) {
+            e.agreed = "You must accept the terms & conditions";
+        }
+
         setErrors(e);
         return Object.keys(e).length === 0;
     };
 
-    const handleSignup = () => {
+    const handleSignup = async () => {
         if (!validate()) return;
-        Alert.alert("Success", "Account created (demo)", [
-            { text: "OK", onPress: () => navigation.replace("Home") },
-        ]);
+
+        setLoading(true);
+        try {
+            const payload = {
+                first_name: form.firstName.trim(),
+                last_name: form.lastName.trim(),
+                email: form.email.trim().toLowerCase(),
+                phone: form.phone.replace(/\D/g, ""),
+                password: form.password,
+                password_confirmation: form.confirmPassword,
+                gender: form.gender.toLowerCase(),
+                date_of_birth: formatDobForApi(form.dob),
+                on_behalf: form.onBehalfId || "1",
+            };
+
+            const response = await register(payload);
+
+            if (response && response.result !== false) {
+                Alert.alert(
+                    "Welcome",
+                    response?.message || "Account created successfully!",
+                    [
+                        {
+                            text: "Continue",
+                            onPress: () => navigation.replace("MainTabs"),
+                        },
+                    ]
+                );
+            } else {
+                Alert.alert(
+                    "Signup Failed",
+                    response?.message || "Failed to create account. Please try again."
+                );
+            }
+        } catch (error) {
+            console.log("Registration error:", error?.message);
+            const msg = error.message || "";
+            const fieldErrors = {};
+            if (/phone/i.test(msg)) {
+                fieldErrors.phone = "An user exists with this phone number";
+            }
+            if (/email/i.test(msg)) {
+                fieldErrors.email = "An user exists with this email address";
+            }
+            if (Object.keys(fieldErrors).length > 0) {
+                setErrors((prev) => ({ ...prev, ...fieldErrors }));
+            }
+            Alert.alert(
+                "Registration Error",
+                msg || "Failed to register. Please check your details."
+            );
+        } finally {
+            setLoading(false);
+        }
     };
 
     return (
-        <KeyboardAvoidingView
-            style={{ flex: 1, backgroundColor: COLORS.background }}
-            behavior={Platform.OS === "ios" ? "padding" : undefined}
+        <KeyboardAwareScrollView
+            ref={scrollViewRef}
+            contentContainerStyle={styles.scroll}
+            showsVerticalScrollIndicator={true}
         >
-            <ScrollView
-                contentContainerStyle={styles.scroll}
-                keyboardShouldPersistTaps="handled"
-                showsVerticalScrollIndicator={false}
+            <TouchableOpacity
+                style={styles.backBtn}
+                onPress={() => navigation.goBack()}
+                disabled={loading}
             >
+                <Text style={styles.backText}>← Back</Text>
+            </TouchableOpacity>
+
+            <View style={styles.header}>
+                <Text style={styles.title}>Create Account</Text>
+                <Text style={styles.subtitle}>Join us to find your perfect match</Text>
+            </View>
+
+            <View style={styles.card}>
+                {/* On Behalf */}
+                <Text style={styles.label}>On Behalf</Text>
                 <TouchableOpacity
-                    style={styles.backBtn}
-                    onPress={() => navigation.goBack()}
+                    style={[styles.select, errors.onBehalf && styles.inputError]}
+                    onPress={() => !loading && setPicker("onBehalf")}
+                    activeOpacity={0.7}
+                    disabled={loading}
                 >
-                    <Text style={styles.backText}>← Back</Text>
+                    <Text
+                        style={[
+                            styles.selectText,
+                            !form.onBehalf && { color: COLORS.textLight },
+                        ]}
+                    >
+                        {form.onBehalf || "Select profile for"}
+                    </Text>
+                    <Text style={styles.caret}>▾</Text>
+                </TouchableOpacity>
+                {errors.onBehalf && (
+                    <Text style={styles.error}>{errors.onBehalf}</Text>
+                )}
+
+                {/* First Name */}
+                <Text style={styles.label}>First Name</Text>
+                <TextInput
+                    style={[styles.input, errors.firstName && styles.inputError]}
+                    placeholder="e.g. John"
+                    placeholderTextColor={COLORS.textLight}
+                    value={form.firstName}
+                    onChangeText={(t) => update("firstName", t)}
+                    editable={!loading}
+                />
+                {errors.firstName && (
+                    <Text style={styles.error}>{errors.firstName}</Text>
+                )}
+
+                {/* Last Name */}
+                <Text style={styles.label}>Last Name</Text>
+                <TextInput
+                    style={[styles.input, errors.lastName && styles.inputError]}
+                    placeholder="e.g. Doe"
+                    placeholderTextColor={COLORS.textLight}
+                    value={form.lastName}
+                    onChangeText={(t) => update("lastName", t)}
+                    editable={!loading}
+                />
+                {errors.lastName && (
+                    <Text style={styles.error}>{errors.lastName}</Text>
+                )}
+
+                {/* Gender */}
+                <Text style={styles.label}>Gender</Text>
+                <View style={styles.genderRow}>
+                    {GENDER_OPTIONS.map((g) => {
+                        const selected = form.gender === g;
+                        return (
+                            <TouchableOpacity
+                                key={g}
+                                style={[
+                                    styles.genderBtn,
+                                    selected && styles.genderBtnActive,
+                                ]}
+                                onPress={() => !loading && update("gender", g)}
+                                disabled={loading}
+                                activeOpacity={0.7}
+                            >
+                                <View
+                                    style={[
+                                        styles.radio,
+                                        selected && styles.radioActive,
+                                    ]}
+                                >
+                                    {selected && <View style={styles.radioDot} />}
+                                </View>
+                                <Text
+                                    style={[
+                                        styles.genderText,
+                                        selected && styles.genderTextActive,
+                                    ]}
+                                >
+                                    {g}
+                                </Text>
+                            </TouchableOpacity>
+                        );
+                    })}
+                </View>
+                {errors.gender && <Text style={styles.error}>{errors.gender}</Text>}
+
+                {/* DOB */}
+                <Text style={styles.label}>Date of Birth</Text>
+                <TextInput
+                    style={[styles.input, errors.dob && styles.inputError]}
+                    placeholder="DD/MM/YYYY"
+                    placeholderTextColor={COLORS.textLight}
+                    value={form.dob}
+                    onChangeText={(t) => {
+                        const digits = t.replace(/[^0-9]/g, "").slice(0, 8);
+                        let formatted = digits;
+                        if (digits.length > 4) {
+                            formatted = `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`;
+                        } else if (digits.length > 2) {
+                            formatted = `${digits.slice(0, 2)}/${digits.slice(2)}`;
+                        }
+                        update("dob", formatted);
+                    }}
+                    keyboardType="number-pad"
+                    maxLength={10}
+                    editable={!loading}
+                />
+                {errors.dob && <Text style={styles.error}>{errors.dob}</Text>}
+
+                {/* Email */}
+                <Text style={styles.label}>Email Address</Text>
+                <TextInput
+                    style={[styles.input, errors.email && styles.inputError]}
+                    placeholder="you@example.com"
+                    placeholderTextColor={COLORS.textLight}
+                    value={form.email}
+                    onChangeText={(t) => update("email", t)}
+                    keyboardType="email-address"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    editable={!loading}
+                />
+                {errors.email && <Text style={styles.error}>{errors.email}</Text>}
+
+                {/* Phone */}
+                <Text style={styles.label}>Phone Number</Text>
+                <TextInput
+                    style={[styles.input, errors.phone && styles.inputError]}
+                    placeholder="e.g. 9876543210"
+                    placeholderTextColor={COLORS.textLight}
+                    value={form.phone}
+                    onChangeText={(t) => {
+                        const digits = t.replace(/\D/g, "").slice(0, 10);
+                        update("phone", digits);
+                    }}
+                    keyboardType="phone-pad"
+                    maxLength={10}
+                    editable={!loading}
+                />
+                {errors.phone && <Text style={styles.error}>{errors.phone}</Text>}
+
+                {/* Password */}
+                <Text style={styles.label}>Password</Text>
+                <TextInput
+                    style={[styles.input, errors.password && styles.inputError]}
+                    placeholder="Minimum 8 characters"
+                    placeholderTextColor={COLORS.textLight}
+                    value={form.password}
+                    onChangeText={(t) => update("password", t)}
+                    secureTextEntry
+                    editable={!loading}
+                />
+                {errors.password && (
+                    <Text style={styles.error}>{errors.password}</Text>
+                )}
+
+                {/* Confirm Password */}
+                <Text style={styles.label}>Confirm Password</Text>
+                <TextInput
+                    style={[styles.input, errors.confirmPassword && styles.inputError]}
+                    placeholder="Re-enter password"
+                    placeholderTextColor={COLORS.textLight}
+                    value={form.confirmPassword}
+                    onChangeText={(t) => update("confirmPassword", t)}
+                    secureTextEntry
+                    editable={!loading}
+                />
+                {errors.confirmPassword && (
+                    <Text style={styles.error}>{errors.confirmPassword}</Text>
+                )}
+
+                {/* Terms Checkbox */}
+                <TouchableOpacity
+                    style={styles.checkboxRow}
+                    onPress={() => !loading && update("agreed", !form.agreed)}
+                    activeOpacity={0.7}
+                    disabled={loading}
+                >
+                    <View
+                        style={[styles.checkbox, form.agreed && styles.checkboxActive]}
+                    >
+                        {form.agreed && <Text style={styles.checkmark}>✓</Text>}
+                    </View>
+                    <Text style={styles.checkboxLabel}>
+                        By signing up you agree to our{" "}
+                        <Text style={styles.checkboxLink}>terms and conditions</Text>
+                    </Text>
+                </TouchableOpacity>
+                {errors.agreed && <Text style={styles.error}>{errors.agreed}</Text>}
+
+                <TouchableOpacity
+                    style={[styles.primaryBtn, loading && styles.btnDisabled]}
+                    onPress={handleSignup}
+                    disabled={loading}
+                    activeOpacity={0.85}
+                >
+                    {loading ? (
+                        <ActivityIndicator color="#fff" size="small" />
+                    ) : (
+                        <Text style={styles.primaryBtnText}>Create Account</Text>
+                    )}
                 </TouchableOpacity>
 
-                <View style={styles.header}>
-                    <Text style={styles.title}>Create Account</Text>
-                    <Text style={styles.subtitle}>Join us to find your perfect match</Text>
-                </View>
-
-                <View style={styles.card}>
-                    {/* On Behalf */}
-                    <Text style={styles.label}>On Behalf</Text>
+                <View style={styles.row}>
+                    <Text style={styles.mutedText}>Already have an account? </Text>
                     <TouchableOpacity
-                        style={[styles.select, errors.onBehalf && styles.inputError]}
-                        onPress={() => setPicker("onBehalf")}
+                        onPress={() => navigation.goBack()}
+                        disabled={loading}
                     >
-                        <Text
-                            style={[
-                                styles.selectText,
-                                !form.onBehalf && { color: COLORS.textLight },
-                            ]}
-                        >
-                            {form.onBehalf || "Select profile for"}
-                        </Text>
-                        <Text style={styles.caret}>▾</Text>
+                        <Text style={styles.link}>Sign In</Text>
                     </TouchableOpacity>
-                    {errors.onBehalf && (
-                        <Text style={styles.error}>{errors.onBehalf}</Text>
-                    )}
-
-                    {/* First Name */}
-                    <Text style={styles.label}>First Name</Text>
-                    <TextInput
-                        style={[styles.input, errors.firstName && styles.inputError]}
-                        placeholder="e.g. Aarav"
-                        placeholderTextColor={COLORS.textLight}
-                        value={form.firstName}
-                        onChangeText={(t) => update("firstName", t)}
-                    />
-                    {errors.firstName && (
-                        <Text style={styles.error}>{errors.firstName}</Text>
-                    )}
-
-                    {/* Last Name */}
-                    <Text style={styles.label}>Last Name</Text>
-                    <TextInput
-                        style={[styles.input, errors.lastName && styles.inputError]}
-                        placeholder="e.g. Sharma"
-                        placeholderTextColor={COLORS.textLight}
-                        value={form.lastName}
-                        onChangeText={(t) => update("lastName", t)}
-                    />
-                    {errors.lastName && (
-                        <Text style={styles.error}>{errors.lastName}</Text>
-                    )}
-
-                    {/* Gender */}
-                    <Text style={styles.label}>Gender</Text>
-                    <View style={styles.genderRow}>
-                        {GENDER_OPTIONS.map((g) => {
-                            const selected = form.gender === g;
-                            return (
-                                <TouchableOpacity
-                                    key={g}
-                                    style={[
-                                        styles.genderBtn,
-                                        selected && styles.genderBtnActive,
-                                    ]}
-                                    onPress={() => update("gender", g)}
-                                >
-                                    <View
-                                        style={[
-                                            styles.radio,
-                                            selected && styles.radioActive,
-                                        ]}
-                                    >
-                                        {selected && <View style={styles.radioDot} />}
-                                    </View>
-                                    <Text
-                                        style={[
-                                            styles.genderText,
-                                            selected && styles.genderTextActive,
-                                        ]}
-                                    >
-                                        {g}
-                                    </Text>
-                                </TouchableOpacity>
-                            );
-                        })}
-                    </View>
-                    {errors.gender && <Text style={styles.error}>{errors.gender}</Text>}
-
-                    {/* DOB */}
-                    <Text style={styles.label}>Date of Birth</Text>
-                    <TextInput
-                        style={[styles.input, errors.dob && styles.inputError]}
-                        placeholder="DD/MM/YYYY"
-                        placeholderTextColor={COLORS.textLight}
-                        value={form.dob}
-                        onChangeText={(t) => {
-                            // auto-format: digits only, insert "/" after 2 and 4 digits
-                            const digits = t.replace(/[^0-9]/g, "").slice(0, 8);
-                            let formatted = digits;
-                            if (digits.length > 4)
-                                formatted = `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`;
-                            else if (digits.length > 2)
-                                formatted = `${digits.slice(0, 2)}/${digits.slice(2)}`;
-                            update("dob", formatted);
-                        }}
-                        keyboardType="number-pad"
-                        maxLength={10}
-                    />
-                    {errors.dob && <Text style={styles.error}>{errors.dob}</Text>}
-
-                    {/* Email */}
-                    <Text style={styles.label}>Email Address</Text>
-                    <TextInput
-                        style={[styles.input, errors.email && styles.inputError]}
-                        placeholder="you@example.com"
-                        placeholderTextColor={COLORS.textLight}
-                        value={form.email}
-                        onChangeText={(t) => update("email", t)}
-                        keyboardType="email-address"
-                        autoCapitalize="none"
-                    />
-                    {errors.email && <Text style={styles.error}>{errors.email}</Text>}
-
-                    {/* Password */}
-                    <Text style={styles.label}>Password</Text>
-                    <TextInput
-                        style={[styles.input, errors.password && styles.inputError]}
-                        placeholder="Minimum 6 characters"
-                        placeholderTextColor={COLORS.textLight}
-                        value={form.password}
-                        onChangeText={(t) => update("password", t)}
-                        secureTextEntry
-                    />
-                    {errors.password && (
-                        <Text style={styles.error}>{errors.password}</Text>
-                    )}
-
-                    {/* Confirm Password */}
-                    <Text style={styles.label}>Confirm Password</Text>
-                    <TextInput
-                        style={[styles.input, errors.confirmPassword && styles.inputError]}
-                        placeholder="Re-enter password"
-                        placeholderTextColor={COLORS.textLight}
-                        value={form.confirmPassword}
-                        onChangeText={(t) => update("confirmPassword", t)}
-                        secureTextEntry
-                    />
-                    {errors.confirmPassword && (
-                        <Text style={styles.error}>{errors.confirmPassword}</Text>
-                    )}
-
-                    {/* Terms Checkbox */}
-                    <TouchableOpacity
-                        style={styles.checkboxRow}
-                        onPress={() => update("agreed", !form.agreed)}
-                        activeOpacity={0.7}
-                    >
-                        <View
-                            style={[styles.checkbox, form.agreed && styles.checkboxActive]}
-                        >
-                            {form.agreed && <Text style={styles.checkmark}>✓</Text>}
-                        </View>
-                        <Text style={styles.checkboxLabel}>
-                            By signing up you agree to our{" "}
-                            <Text style={styles.checkboxLink}>terms and conditions</Text>
-                        </Text>
-                    </TouchableOpacity>
-                    {errors.agreed && <Text style={styles.error}>{errors.agreed}</Text>}
-
-                    <TouchableOpacity style={styles.primaryBtn} onPress={handleSignup}>
-                        <Text style={styles.primaryBtnText}>Create Account</Text>
-                    </TouchableOpacity>
-
-                    <View style={styles.row}>
-                        <Text style={styles.mutedText}>Already have an account? </Text>
-                        <TouchableOpacity onPress={() => navigation.goBack()}>
-                            <Text style={styles.link}>Sign In</Text>
-                        </TouchableOpacity>
-                    </View>
                 </View>
-            </ScrollView>
+            </View>
 
             {/* Picker Modal */}
             <Modal
@@ -303,28 +415,27 @@ export default function SignupScreen({ navigation }) {
                     onPress={() => setPicker(null)}
                 >
                     <View style={styles.modalSheet}>
-                        <Text style={styles.modalTitle}>
-                            {picker === "onBehalf"
-                                ? "Profile created for"
-                                : "Select gender"}
-                        </Text>
-                        {(picker === "onBehalf" ? ON_BEHALF_OPTIONS : GENDER_OPTIONS).map(
-                            (opt) => (
-                                <TouchableOpacity
-                                    key={opt}
-                                    style={styles.modalItem}
-                                    onPress={() => {
-                                        update(picker, opt);
-                                        setPicker(null);
-                                    }}
-                                >
-                                    <Text style={styles.modalItemText}>{opt}</Text>
-                                    {form[picker] === opt && (
-                                        <Text style={styles.modalCheck}>✓</Text>
-                                    )}
-                                </TouchableOpacity>
-                            )
-                        )}
+                        <Text style={styles.modalTitle}>Profile created for</Text>
+                        {ON_BEHALF_LIST.map((opt) => (
+                            <TouchableOpacity
+                                key={opt.id}
+                                style={styles.modalItem}
+                                onPress={() => {
+                                    setForm((p) => ({
+                                        ...p,
+                                        onBehalf: opt.label,
+                                        onBehalfId: opt.id,
+                                    }));
+                                    setErrors((p) => ({ ...p, onBehalf: undefined }));
+                                    setPicker(null);
+                                }}
+                            >
+                                <Text style={styles.modalItemText}>{opt.label}</Text>
+                                {form.onBehalf === opt.label && (
+                                    <Text style={styles.modalCheck}>✓</Text>
+                                )}
+                            </TouchableOpacity>
+                        ))}
                         <TouchableOpacity
                             style={styles.modalCancel}
                             onPress={() => setPicker(null)}
@@ -334,7 +445,7 @@ export default function SignupScreen({ navigation }) {
                     </View>
                 </TouchableOpacity>
             </Modal>
-        </KeyboardAvoidingView>
+        </KeyboardAwareScrollView>
     );
 }
 
@@ -343,7 +454,6 @@ const styles = StyleSheet.create({
         flexGrow: 1,
         padding: 20,
         paddingTop: 50,
-        paddingBottom: 40,
     },
     backBtn: { marginBottom: 12 },
     backText: {
@@ -382,7 +492,7 @@ const styles = StyleSheet.create({
         borderRadius: 12,
         paddingHorizontal: 14,
         paddingVertical: 14,
-        fontSize: 16,
+        fontSize: 15,
         fontFamily: FONTS.regular,
         color: COLORS.text,
         backgroundColor: "#FFFCF9",
@@ -406,7 +516,7 @@ const styles = StyleSheet.create({
         backgroundColor: "#FFFCF9",
     },
     selectText: {
-        fontSize: 16,
+        fontSize: 15,
         fontFamily: FONTS.regular,
         color: COLORS.text,
     },
@@ -496,7 +606,12 @@ const styles = StyleSheet.create({
         borderRadius: 12,
         paddingVertical: 16,
         alignItems: "center",
+        justifyContent: "center",
         marginTop: 20,
+        minHeight: 52,
+    },
+    btnDisabled: {
+        opacity: 0.7,
     },
     primaryBtnText: {
         color: "#fff",

@@ -17,6 +17,7 @@ import {
 } from "@expo-google-fonts/poppins";
 
 import RootNavigator from "./src/navigation/RootNavigator";
+import { AuthProvider } from "./src/contexts/AuthContext";
 
 SplashScreen.preventAutoHideAsync();
 
@@ -59,9 +60,11 @@ export default function App() {
         style={{ flex: 1, backgroundColor: BACKGROUND }}
         onLayout={onLayoutRootView}
       >
-        <NavigationContainer>
-          <RootNavigator />
-        </NavigationContainer>
+        <AuthProvider>
+          <NavigationContainer>
+            <RootNavigator />
+          </NavigationContainer>
+        </AuthProvider>
       </View>
     </SafeAreaProvider>
   );

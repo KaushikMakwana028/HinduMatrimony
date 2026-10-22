@@ -1,37 +1,24 @@
-import React, { useState } from "react";
+import React, { useState, useRef } from "react";
 import {
     View,
     Text,
     TextInput,
     TouchableOpacity,
     StyleSheet,
-    KeyboardAvoidingView,
-    Platform,
-    ScrollView,
     Alert,
+    ActivityIndicator,
 } from "react-native";
-
-const COLORS = {
-    primary: "#F9407F",
-    primaryLight: "#FB6D9B",
-    background: "#FFF8F0",
-    surface: "#FFFFFF",
-    text: "#2B1B17",
-    textLight: "#7A6A65",
-    border: "#E8DDD5",
-    error: "#D32F2F",
-};
-
-const FONTS = {
-    regular: "Poppins_400Regular",
-    medium: "Poppins_500Medium",
-    semiBold: "Poppins_600SemiBold",
-    bold: "Poppins_700Bold",
-};
+import { useAuth } from "../contexts/AuthContext";
+import KeyboardAwareScrollView from "../components/KeyboardAwareScrollView";
+import { COLORS, FONTS } from "../theme";
 
 export default function LoginScreen({ navigation }) {
-    const [email, setEmail] = useState("");
+    const { login } = useAuth();
+    const scrollViewRef = useRef(null);
+
+    const [emailOrPhone, setEmailOrPhone] = useState("");
     const [password, setPassword] = useState("");
+    const [loading, setLoading] = useState(false);
     const [errors, setErrors] = useState({});
 
     const handleGuestLogin = () => {
@@ -40,105 +27,159 @@ export default function LoginScreen({ navigation }) {
 
     const validate = () => {
         const e = {};
-        if (!email.trim()) e.email = "Email is required";
-        else if (!/^\S+@\S+\.\S+$/.test(email)) e.email = "Enter a valid email";
-        if (!password) e.password = "Password is required";
-        else if (password.length < 6) e.password = "Minimum 6 characters";
+        const trimmed = emailOrPhone.trim();
+
+        if (!trimmed) {
+            e.emailOrPhone = "Email or phone number is required";
+        } else if (trimmed.includes("@")) {
+            if (!/^\S+@\S+\.\S+$/.test(trimmed)) {
+                e.emailOrPhone = "Enter a valid email address";
+            }
+        } else {
+            const cleanPhone = trimmed.replace(/\D/g, "");
+            if (cleanPhone.length < 8) {
+                e.emailOrPhone = "Enter a valid phone number or email";
+            }
+        }
+
+        if (!password) {
+            e.password = "Password is required";
+        } else if (password.length < 6) {
+            e.password = "Minimum 6 characters";
+        }
+
         setErrors(e);
         return Object.keys(e).length === 0;
     };
 
-    const handleLogin = () => {
+    const handleLogin = async () => {
         if (!validate()) return;
-        Alert.alert("Welcome", "Login successful (demo)");
-        navigation.replace("MainTabs");   // ← was navigation.replace("Home")
+
+        setLoading(true);
+        try {
+            const response = await login({
+                email_or_phone: emailOrPhone.trim(),
+                password,
+            });
+
+            if (response && response.result !== false) {
+                navigation.replace("MainTabs");
+            } else {
+                Alert.alert(
+                    "Login Failed",
+                    response?.message || "Invalid credentials. Please try again."
+                );
+            }
+        } catch (error) {
+            console.log("Login error:", error?.message);
+            Alert.alert(
+                "Login Error",
+                error.message || "Failed to sign in. Please check your credentials."
+            );
+        } finally {
+            setLoading(false);
+        }
     };
 
     return (
-        <KeyboardAvoidingView
-            style={{ flex: 1, backgroundColor: COLORS.background }}
-            behavior={Platform.OS === "ios" ? "padding" : undefined}
+        <KeyboardAwareScrollView
+            ref={scrollViewRef}
+            contentContainerStyle={styles.scroll}
+            showsVerticalScrollIndicator={true}
         >
-            <ScrollView
-                contentContainerStyle={styles.scroll}
-                keyboardShouldPersistTaps="handled"
-                showsVerticalScrollIndicator={false}
-            >
-                <View style={styles.header}>
-                    <Text style={styles.title}>Hindu Matrimony</Text>
-                    <Text style={styles.subtitle}>
-                        Find your life partner with values and traditions
-                    </Text>
-                </View>
-
-                <View style={styles.card}>
-                    <Text style={styles.cardTitle}>Welcome Back</Text>
-                    <Text style={styles.cardSubtitle}>Sign in to continue</Text>
-
-                    <Text style={styles.label}>Email</Text>
-                    <TextInput
-                        style={[styles.input, errors.email && styles.inputError]}
-                        placeholder="you@example.com"
-                        placeholderTextColor={COLORS.textLight}
-                        value={email}
-                        onChangeText={(t) => {
-                            setEmail(t);
-                            setErrors((p) => ({ ...p, email: undefined }));
-                        }}
-                        keyboardType="email-address"
-                        autoCapitalize="none"
-                    />
-                    {errors.email && <Text style={styles.error}>{errors.email}</Text>}
-
-                    <Text style={styles.label}>Password</Text>
-                    <TextInput
-                        style={[styles.input, errors.password && styles.inputError]}
-                        placeholder="Enter your password"
-                        placeholderTextColor={COLORS.textLight}
-                        value={password}
-                        onChangeText={(t) => {
-                            setPassword(t);
-                            setErrors((p) => ({ ...p, password: undefined }));
-                        }}
-                        secureTextEntry
-                    />
-                    {errors.password && (
-                        <Text style={styles.error}>{errors.password}</Text>
-                    )}
-
-                    <TouchableOpacity style={styles.forgot}>
-                        <Text style={styles.forgotText}>Forgot Password?</Text>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity style={styles.primaryBtn} onPress={handleLogin}>
-                        <Text style={styles.primaryBtnText}>Sign In</Text>
-                    </TouchableOpacity>
-
-                    {/* 🆕 Quick/Guest login - bypasses validation */}
-                    <TouchableOpacity style={styles.guestBtn} onPress={handleGuestLogin}>
-                        <Text style={styles.guestBtnText}>Continue without Login (Demo)</Text>
-                    </TouchableOpacity>
-
-
-                    <View style={styles.divider}>
-                        <View style={styles.line} />
-                        <Text style={styles.or}>OR</Text>
-                        <View style={styles.line} />
-                    </View>
-
-                    <TouchableOpacity
-                        style={styles.secondaryBtn}
-                        onPress={() => navigation.navigate("Signup")}
-                    >
-                        <Text style={styles.secondaryBtnText}>Create New Account</Text>
-                    </TouchableOpacity>
-                </View>
-
-                <Text style={styles.footer}>
-                    By continuing, you agree to our Terms & Privacy Policy
+            <View style={styles.header}>
+                <Text style={styles.title}>Hindu Matrimony</Text>
+                <Text style={styles.subtitle}>
+                    Find your life partner with values and traditions
                 </Text>
-            </ScrollView>
-        </KeyboardAvoidingView>
+            </View>
+
+            <View style={styles.card}>
+                <Text style={styles.cardTitle}>Welcome Back</Text>
+                <Text style={styles.cardSubtitle}>Sign in to continue</Text>
+
+                <Text style={styles.label}>Email or Phone</Text>
+                <TextInput
+                    style={[styles.input, errors.emailOrPhone && styles.inputError]}
+                    placeholder="you@example.com or 9876543210"
+                    placeholderTextColor={COLORS.textLight}
+                    value={emailOrPhone}
+                    onChangeText={(t) => {
+                        setEmailOrPhone(t);
+                        setErrors((p) => ({ ...p, emailOrPhone: undefined }));
+                    }}
+                    keyboardType="email-address"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    editable={!loading}
+                />
+                {errors.emailOrPhone && (
+                    <Text style={styles.error}>{errors.emailOrPhone}</Text>
+                )}
+
+                <Text style={styles.label}>Password</Text>
+                <TextInput
+                    style={[styles.input, errors.password && styles.inputError]}
+                    placeholder="Enter your password"
+                    placeholderTextColor={COLORS.textLight}
+                    value={password}
+                    onChangeText={(t) => {
+                        setPassword(t);
+                        setErrors((p) => ({ ...p, password: undefined }));
+                    }}
+                    secureTextEntry
+                    editable={!loading}
+                />
+                {errors.password && (
+                    <Text style={styles.error}>{errors.password}</Text>
+                )}
+
+                <TouchableOpacity style={styles.forgot} disabled={loading}>
+                    <Text style={styles.forgotText}>Forgot Password?</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                    style={[styles.primaryBtn, loading && styles.btnDisabled]}
+                    onPress={handleLogin}
+                    disabled={loading}
+                    activeOpacity={0.85}
+                >
+                    {loading ? (
+                        <ActivityIndicator color="#fff" size="small" />
+                    ) : (
+                        <Text style={styles.primaryBtnText}>Sign In</Text>
+                    )}
+                </TouchableOpacity>
+
+                {/* Quick/Guest login */}
+                <TouchableOpacity
+                    style={styles.guestBtn}
+                    onPress={handleGuestLogin}
+                    disabled={loading}
+                >
+                    <Text style={styles.guestBtnText}>Continue without Login (Demo)</Text>
+                </TouchableOpacity>
+
+                <View style={styles.divider}>
+                    <View style={styles.line} />
+                    <Text style={styles.or}>OR</Text>
+                    <View style={styles.line} />
+                </View>
+
+                <TouchableOpacity
+                    style={styles.secondaryBtn}
+                    onPress={() => navigation.navigate("Signup")}
+                    disabled={loading}
+                    activeOpacity={0.8}
+                >
+                    <Text style={styles.secondaryBtnText}>Create New Account</Text>
+                </TouchableOpacity>
+            </View>
+
+            <Text style={styles.footer}>
+                By continuing, you agree to our Terms & Privacy Policy
+            </Text>
+        </KeyboardAwareScrollView>
     );
 }
 
@@ -184,7 +225,7 @@ const styles = StyleSheet.create({
         borderRadius: 12,
         paddingHorizontal: 14,
         paddingVertical: 14,
-        fontSize: 16,
+        fontSize: 15,
         fontFamily: FONTS.regular,
         color: COLORS.text,
         backgroundColor: "#FFFCF9",
@@ -207,6 +248,11 @@ const styles = StyleSheet.create({
         borderRadius: 12,
         paddingVertical: 16,
         alignItems: "center",
+        justifyContent: "center",
+        minHeight: 52,
+    },
+    btnDisabled: {
+        opacity: 0.7,
     },
     primaryBtnText: {
         color: "#fff",
