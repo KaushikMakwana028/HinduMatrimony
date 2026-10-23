@@ -12,6 +12,8 @@ const API_CONFIG = {
         EXPRESS_INTEREST: '/member/express-interest',
         INTEREST_ACCEPT: '/member/interest-accept',
         INTEREST_REJECT: '/member/interest-reject',
+        MY_INTERESTS: '/member/my-interests',
+        INTEREST_REQUESTS: '/member/interest-requests',
         MY_SHORTLISTS: '/member/my-shortlists',
         ADD_TO_SHORTLIST: '/member/add-to-shortlist',
         REMOVE_FROM_SHORTLIST: '/member/remove-from-shortlist',
@@ -39,6 +41,14 @@ const API_CONFIG = {
         MEMBER_CONTACT_INFO_UPDATE: '/member/contact-info/update',
         MEMBER_ACCOUNT_DEACTIVATE: '/member/account/deactivate',
         MEMBER_ACCOUNT_DELETE: '/member/account/delete',
+        MEMBER_GALLERY_IMAGE: '/member/gallery-image',
+        DELETE_GALLERY_IMAGE: (id) => `/member/gallery-image/${id}`,
+        MEMBER_HAPPY_STORY: '/member/happy-story',
+        MEMBER_CHECK_HAPPY_STORY: '/member/check-happy-story',
+        PACKAGES_LIST: '/home/packages',
+        PACKAGE_PURCHASE: '/member/package-purchase',
+        PACKAGE_PURCHASE_HISTORY: '/member/package-purchase-history',
+        PACKAGE_PURCHASE_INVOICE: '/member/package-purchase-history-invoice',
     },
 };
 

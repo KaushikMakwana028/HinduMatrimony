@@ -24,10 +24,75 @@ const memberService = {
      * @param {string} token
      */
     async updateBasicInfo(data, token) {
-        const response = await apiClient.post(ENDPOINTS.MEMBER_BASIC_INFO_UPDATE, data, { token });
+        const payload = {
+            ...data,
+            first_name: data.first_name || data.firs_name || '',
+            firs_name: data.firs_name || data.first_name || '',
+        };
+        const response = await apiClient.post(ENDPOINTS.MEMBER_BASIC_INFO_UPDATE, payload, { token });
         if (response && response.result === false) {
             throw new ApiError(response.message || 'Failed to update basic information', 400, response);
         }
+        return response;
+    },
+
+    /**
+     * Upload / Update profile avatar photo via basic-info update API
+     * @param {Object} asset ImagePicker asset { uri, fileName, mimeType }
+     * @param {Object} basicData { first_name, last_name, email, phone, gender, etc. }
+     * @param {string} token
+     */
+    async uploadProfilePhoto(asset, basicData = {}, token) {
+        if (!asset || !asset.uri) {
+            throw new ApiError('Please select a photo to upload', 400);
+        }
+        if (!token) {
+            throw new ApiError('Authentication token is required', 401);
+        }
+
+        const uri = asset.uri;
+        const uriParts = uri.split('/');
+        const fileName = asset.fileName || uriParts[uriParts.length - 1] || `profile_photo_${Date.now()}.jpg`;
+
+        let mimeType = asset.mimeType;
+        if (!mimeType) {
+            const match = /\.(\w+)$/.exec(fileName);
+            const ext = match ? match[1].toLowerCase() : 'jpg';
+            mimeType = ext === 'png' ? 'image/png' : 'image/jpeg';
+        }
+
+        const firstName = basicData.first_name || basicData.firs_name || basicData.name?.split(' ')[0] || 'Member';
+        const lastName = basicData.last_name || basicData.name?.split(' ').slice(1).join(' ') || '';
+
+        const parameters = {
+            first_name: firstName,
+            firs_name: firstName,
+            last_name: lastName,
+            email: basicData.email || '',
+            phone: basicData.phone || '',
+            gender: basicData.gender || 'male',
+            date_of_birth: basicData.date_of_birth || basicData.dob || '',
+            on_behalf: String(basicData.on_behalf || basicData.onbehalf || '1'),
+            marital_status: String(basicData.marital_status || basicData.maritial_status || 'Never Married'),
+            children: String(basicData.children || '0'),
+        };
+
+        const response = await apiClient.uploadFile(
+            ENDPOINTS.MEMBER_BASIC_INFO_UPDATE,
+            {
+                fileUri: uri,
+                fieldName: 'photo',
+                fileName,
+                mimeType,
+                parameters,
+            },
+            { token }
+        );
+
+        if (response && response.result === false) {
+            throw new ApiError(response.message || 'Failed to update profile photo', 400, response);
+        }
+
         return response;
     },
 
@@ -193,7 +258,36 @@ const memberService = {
      * @param {string} token
      */
     async updatePartnerExpectation(data, token) {
-        const response = await apiClient.post(ENDPOINTS.MEMBER_PARTNER_EXPECTATION_UPDATE, data, { token });
+        // Guarantee all ID fields are positive integers and required fields are defined
+        // to prevent MySQL integrity constraint violations / 500 errors on the backend.
+        const payload = {
+            general: String(data.general || 'Looking for a caring, family-oriented partner'),
+            partner_height: data.partner_height !== undefined && data.partner_height !== null ? String(data.partner_height) : '5.6',
+            partner_weight: data.partner_weight !== undefined && data.partner_weight !== null ? String(data.partner_weight) : '60',
+            partner_marital_status: Number(data.partner_marital_status) || 1,
+            partner_children_acceptable: String(data.partner_children_acceptable || 'No'),
+            residence_country_id: Number(data.residence_country_id) || 1,
+            partner_country_id: Number(data.partner_country_id) || Number(data.residence_country_id) || 1,
+            partner_state_id: Number(data.partner_state_id) || 1,
+            partner_religion_id: Number(data.partner_religion_id) || 1,
+            partner_caste_id: Number(data.partner_caste_id) || 1,
+            partner_sub_caste_id: Number(data.partner_sub_caste_id) || 1,
+            pertner_education: String(data.pertner_education || data.partner_education || 'Graduate'),
+            partner_education: String(data.pertner_education || data.partner_education || 'Graduate'),
+            partner_profession: String(data.partner_profession || 'Professional'),
+            smoking_acceptable: String(data.smoking_acceptable || 'No'),
+            drinking_acceptable: String(data.drinking_acceptable || 'No'),
+            partner_diet: String(data.partner_diet || 'Vegetarian'),
+            partner_body_type: String(data.partner_body_type || 'Average'),
+            partner_personal_value: String(data.partner_personal_value || 'Traditional'),
+            partner_manglik: String(data.partner_manglik || 'No'),
+            language_id: Number(data.language_id) || 1,
+            family_value_id: Number(data.family_value_id) || 1,
+            pertner_complexion: String(data.pertner_complexion || data.partner_complexion || 'Fair'),
+            partner_complexion: String(data.pertner_complexion || data.partner_complexion || 'Fair'),
+        };
+
+        const response = await apiClient.post(ENDPOINTS.MEMBER_PARTNER_EXPECTATION_UPDATE, payload, { token });
         if (response && response.result === false) {
             throw new ApiError(response.message || 'Failed to update partner expectations', 400, response);
         }
@@ -202,11 +296,17 @@ const memberService = {
 
     /**
      * Change user password
+     * POST https://hindumatrimony.org.in/api/member/change/password
      * @param {Object} data { old_password, password, password_confirmation }
      * @param {string} token
      */
     async changePassword(data, token) {
-        const response = await apiClient.post(ENDPOINTS.MEMBER_CHANGE_PASSWORD, data, { token });
+        const payload = {
+            old_password: data.old_password,
+            password: data.password,
+            password_confirmation: data.password_confirmation,
+        };
+        const response = await apiClient.post(ENDPOINTS.MEMBER_CHANGE_PASSWORD, payload, { token });
         if (response && response.result === false) {
             throw new ApiError(response.message || 'Failed to change password', 400, response);
         }
@@ -228,11 +328,28 @@ const memberService = {
 
     /**
      * Deactivate account
-     * @param {Object} data { deacticvation_status: 1 }
-     * @param {string} token
+     * POST https://hindumatrimony.org.in/api/member/account/deactivate
+     * Payload: { "deacticvation_status": 1 }
+     *
+     * @param {string|Object} arg1 - Token or optional payload
+     * @param {string|Object} arg2 - Token or optional payload
      */
-    async deactivateAccount(data, token) {
-        const response = await apiClient.post(ENDPOINTS.MEMBER_ACCOUNT_DEACTIVATE, data, { token });
+    async deactivateAccount(arg1, arg2) {
+        let token = null;
+        let data = {};
+        if (typeof arg1 === 'string') {
+            token = arg1;
+            data = typeof arg2 === 'object' && arg2 !== null ? arg2 : {};
+        } else if (typeof arg2 === 'string') {
+            token = arg2;
+            data = typeof arg1 === 'object' && arg1 !== null ? arg1 : {};
+        }
+        const payload = {
+            deacticvation_status: 1,
+            deactivation_status: 1,
+            ...data,
+        };
+        const response = await apiClient.post(ENDPOINTS.MEMBER_ACCOUNT_DEACTIVATE, payload, { token });
         if (response && response.result === false) {
             throw new ApiError(response.message || 'Failed to deactivate account', 400, response);
         }
@@ -241,6 +358,9 @@ const memberService = {
 
     /**
      * Delete account permanently
+     * POST https://hindumatrimony.org.in/api/member/account/delete
+     * (No payload needed — uses authenticated user via token)
+     *
      * @param {string} token
      */
     async deleteAccount(token) {

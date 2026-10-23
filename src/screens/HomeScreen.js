@@ -12,11 +12,14 @@ import ScreenHeader from "../components/ScreenHeader";
 import KeyboardAwareScrollView from "../components/KeyboardAwareScrollView";
 import { useAuth } from "../contexts/AuthContext";
 import homeService from "../services/homeService";
-import { COLORS, FONTS } from "../theme";
+import planService from "../services/planService";
+import { subscribeMemberAction } from "../services/memberEvents";
+import { COLORS, FONTS, DEFAULT_AVATAR } from "../theme";
 
 export default function HomeScreen({ navigation }) {
     const { user, token } = useAuth();
     const [dashboardData, setDashboardData] = useState(null);
+    const [planInfo, setPlanInfo] = useState(null);
     const [emailUnverified, setEmailUnverified] = useState(false);
     const [refreshing, setRefreshing] = useState(false);
 
@@ -26,10 +29,18 @@ export default function HomeScreen({ navigation }) {
 
         (async () => {
             try {
-                const response = await homeService.getDashboardData(token);
-                if (isMounted && response && response.result !== false && response.data) {
-                    setDashboardData(response.data);
+                const [dashRes, planRes] = await Promise.allSettled([
+                    homeService.getDashboardData(token),
+                    planService.getActivePlan(user, null, token),
+                ]);
+                if (!isMounted) return;
+
+                if (dashRes.status === "fulfilled" && dashRes.value && dashRes.value.result !== false && dashRes.value.data) {
+                    setDashboardData(dashRes.value.data);
                     setEmailUnverified(false);
+                }
+                if (planRes.status === "fulfilled" && planRes.value) {
+                    setPlanInfo(planRes.value);
                 }
             } catch (err) {
                 if (/not verified/i.test(err?.message)) {
@@ -44,16 +55,36 @@ export default function HomeScreen({ navigation }) {
         return () => {
             isMounted = false;
         };
-    }, [token]);
+    }, [token, user]);
+
+    // Live update when contacts or quota are used or photo updated
+    useEffect(() => {
+        const unsub = subscribeMemberAction((event) => {
+            if (event?.type === "contact_viewed" && event?.remainingContacts !== undefined) {
+                setPlanInfo((prev) => (prev ? { ...prev, remainingContacts: event.remainingContacts } : prev));
+                setDashboardData((prev) => (prev ? { ...prev, remaining_contact_view: event.remainingContacts } : prev));
+            }
+            if ((event?.type === "profile_updated" || event?.type === "profile_photo_updated") && event?.photo) {
+                setDashboardData((prev) => (prev ? { ...prev, member_photo: event.photo } : prev));
+            }
+        });
+        return () => unsub();
+    }, []);
 
     const onRefresh = useCallback(async () => {
         if (!token) return;
         setRefreshing(true);
         try {
-            const response = await homeService.getDashboardData(token);
-            if (response && response.result !== false && response.data) {
-                setDashboardData(response.data);
+            const [dashRes, planRes] = await Promise.allSettled([
+                homeService.getDashboardData(token),
+                planService.getActivePlan(user, null, token),
+            ]);
+            if (dashRes.status === "fulfilled" && dashRes.value && dashRes.value.result !== false && dashRes.value.data) {
+                setDashboardData(dashRes.value.data);
                 setEmailUnverified(false);
+            }
+            if (planRes.status === "fulfilled" && planRes.value) {
+                setPlanInfo(planRes.value);
             }
         } catch (err) {
             if (/not verified/i.test(err?.message)) {
@@ -65,29 +96,34 @@ export default function HomeScreen({ navigation }) {
         } finally {
             setRefreshing(false);
         }
-    }, [token]);
+    }, [token, user]);
 
     // Extract dynamic fields with fallback
     const rawName = dashboardData?.member_name || user?.name || "Welcome back";
     const firstName = rawName.split(" ")[0];
-    const initial = rawName.charAt(0).toUpperCase() || "A";
     const memberPhoto = dashboardData?.member_photo || user?.avatar_original || user?.avatar;
 
     const packageInfo = dashboardData?.current_package_info;
-    const packageName = packageInfo?.package_name || (user?.membership ? "Premium Member" : "Free Member");
+    const packageName = planInfo?.name || packageInfo?.package_name || (user?.membership ? "Silver Package" : "Free Package");
     const packageExpiry = packageInfo?.package_expiry;
 
-    const remainingInterest = dashboardData?.remaining_interest !== undefined
-        ? dashboardData.remaining_interest
-        : 25;
+    const remainingInterest = planInfo?.remainingInterests !== undefined
+        ? planInfo.remainingInterests
+        : (dashboardData?.remaining_interest !== undefined
+            ? dashboardData.remaining_interest
+            : 30);
 
-    const remainingContact = dashboardData?.remaining_contact_view !== undefined
-        ? dashboardData.remaining_contact_view
-        : 10;
+    const remainingContact = planInfo?.remainingContacts !== undefined
+        ? planInfo.remainingContacts
+        : (dashboardData?.remaining_contact_view !== undefined
+            ? dashboardData.remaining_contact_view
+            : 30);
 
-    const remainingGallery = dashboardData?.remaining_photo_gallery !== undefined
-        ? dashboardData.remaining_photo_gallery
-        : 5;
+    const remainingGallery = planInfo?.maxGallery !== undefined
+        ? planInfo.maxGallery
+        : (dashboardData?.remaining_photo_gallery !== undefined
+            ? dashboardData.remaining_photo_gallery
+            : 5);
 
     const remainingProfileView = (dashboardData?.remaining_profile_image_view !== undefined && dashboardData.remaining_profile_image_view !== "")
         ? dashboardData.remaining_profile_image_view
@@ -140,13 +176,11 @@ export default function HomeScreen({ navigation }) {
                         onPress={() => navigation.navigate("Profile")}
                         activeOpacity={0.8}
                     >
-                        {memberPhoto ? (
-                            <Image source={{ uri: memberPhoto }} style={styles.avatarImg} />
-                        ) : (
-                            <View style={styles.avatar}>
-                                <Text style={styles.avatarText}>{initial}</Text>
-                            </View>
-                        )}
+                        <Image
+                            source={{ uri: memberPhoto || DEFAULT_AVATAR }}
+                            style={styles.avatarImg}
+                            resizeMode="cover"
+                        />
                     </TouchableOpacity>
                 </View>
             </ScreenHeader>
@@ -215,7 +249,11 @@ export default function HomeScreen({ navigation }) {
                     <Text style={styles.promoSubtitle}>
                         Get more interests, contacts and gallery uploads.
                     </Text>
-                    <TouchableOpacity style={styles.promoBtn} activeOpacity={0.85}>
+                    <TouchableOpacity
+                        style={styles.promoBtn}
+                        activeOpacity={0.85}
+                        onPress={() => navigation.navigate("Packages")}
+                    >
                         <Text style={styles.promoBtnText}>View Plans</Text>
                     </TouchableOpacity>
                 </View>

@@ -62,8 +62,16 @@ export function AuthProvider({ children }) {
             await storageService.saveAuthToken(response.access_token);
 
             if (response.user) {
-                setUser(response.user);
-                await storageService.saveUser(response.user);
+                // Merge with any existing stored profile attributes to prevent data loss
+                const existing = await storageService.getUser();
+                const mergedUser = {
+                    ...(existing || {}),
+                    ...response.user,
+                    phone: response.user.phone || existing?.phone || '',
+                    email: response.user.email || existing?.email || '',
+                };
+                setUser(mergedUser);
+                await storageService.saveUser(mergedUser);
             }
         }
 
@@ -79,8 +87,20 @@ export function AuthProvider({ children }) {
             await storageService.saveAuthToken(response.access_token);
 
             if (response.user) {
-                setUser(response.user);
-                await storageService.saveUser(response.user);
+                // Retain all registration fields (gender, dob, on_behalf, etc.)
+                const combinedUser = {
+                    ...userData,
+                    ...response.user,
+                    first_name: response.user.first_name || userData.first_name,
+                    last_name: response.user.last_name || userData.last_name,
+                    gender: response.user.gender || userData.gender,
+                    date_of_birth: response.user.date_of_birth || userData.date_of_birth,
+                    on_behalf: response.user.on_behalf || userData.on_behalf,
+                    phone: response.user.phone || userData.phone,
+                    email: response.user.email || userData.email,
+                };
+                setUser(combinedUser);
+                await storageService.saveUser(combinedUser);
             }
         }
 

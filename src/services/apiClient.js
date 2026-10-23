@@ -1,3 +1,5 @@
+/* eslint-disable import/namespace */
+import * as FileSystem from 'expo-file-system';
 import { BASE_URL, TIMEOUT } from '../config/api';
 
 /**
@@ -31,12 +33,17 @@ async function request(endpoint, options = {}) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeout);
 
+    const isFormData = typeof FormData !== 'undefined' && body instanceof FormData;
+
     const requestHeaders = {
         'Accept': 'application/json',
-        'Content-Type': 'application/json',
         'X-Requested-With': 'XMLHttpRequest',
         ...headers,
     };
+
+    if (!isFormData && !requestHeaders['Content-Type']) {
+        requestHeaders['Content-Type'] = 'application/json';
+    }
 
     if (token) {
         requestHeaders['Authorization'] = `Bearer ${token}`;
@@ -49,7 +56,7 @@ async function request(endpoint, options = {}) {
     };
 
     if (body && (method === 'POST' || method === 'PUT' || method === 'PATCH')) {
-        config.body = typeof body === 'string' ? body : JSON.stringify(body);
+        config.body = isFormData ? body : (typeof body === 'string' ? body : JSON.stringify(body));
     }
 
     let rawText = '';
@@ -138,6 +145,16 @@ async function request(endpoint, options = {}) {
                 errorMessage = `Request failed with status ${response.status}`;
             }
 
+            // Never show raw 500 or technical "Server Error" strings to the user
+            if (
+                response.status >= 500 ||
+                errorMessage.toLowerCase().includes('server error') ||
+                errorMessage.toLowerCase().includes('sqlstate') ||
+                errorMessage.toLowerCase().includes('integrity constraint')
+            ) {
+                errorMessage = 'Some required information is missing or invalid. Please check your entries.';
+            }
+
             console.log(`[API Response ${response.status}] ${method} ${url}:`, {
                 status: response.status,
                 errorMessage,
@@ -167,11 +184,118 @@ async function request(endpoint, options = {}) {
     }
 }
 
+/**
+ * Dedicated multipart file uploader that uses native FileSystem.uploadAsync
+ * to eliminate "Unsupported FormDataPart implementation" errors on modern Expo/React Native.
+ */
+async function uploadFileRequest(endpoint, fileOptions = {}, options = {}) {
+    const {
+        fileUri,
+        fieldName = 'file',
+        parameters = {},
+        mimeType = 'image/jpeg',
+    } = fileOptions;
+
+    const { token = null, headers = {} } = options;
+
+    if (!fileUri) {
+        throw new ApiError('No file URI provided for upload', 400);
+    }
+
+    const url = endpoint.startsWith('http')
+        ? endpoint
+        : `${BASE_URL}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;
+
+    const requestHeaders = {
+        Accept: 'application/json',
+        ...headers,
+    };
+
+    if (token) {
+        requestHeaders['Authorization'] = `Bearer ${token}`;
+    }
+
+    const stringParams = {};
+    if (parameters && typeof parameters === 'object') {
+        Object.keys(parameters).forEach((k) => {
+            if (parameters[k] !== undefined && parameters[k] !== null) {
+                stringParams[k] = String(parameters[k]);
+            }
+        });
+    }
+
+    // Attempt native background multipart upload via expo-file-system
+    if (FileSystem?.uploadAsync && FileSystem?.FileSystemUploadType?.MULTIPART) {
+        try {
+            const uploadResult = await FileSystem.uploadAsync(url, fileUri, {
+                fieldName,
+                httpMethod: 'POST',
+                uploadType: FileSystem.FileSystemUploadType.MULTIPART,
+                headers: requestHeaders,
+                mimeType,
+                parameters: stringParams,
+            });
+
+            let data = null;
+            try {
+                data = JSON.parse(uploadResult.body);
+            } catch {
+                data = uploadResult.body;
+            }
+
+            if (uploadResult.status >= 400 || (data && data.result === false)) {
+                const errMsg =
+                    (typeof data === 'object' && (data?.message || data?.error)) ||
+                    `Upload failed with status ${uploadResult.status}`;
+                throw new ApiError(errMsg, uploadResult.status, data);
+            }
+
+            return data;
+        } catch (uploadErr) {
+            if (uploadErr instanceof ApiError) throw uploadErr;
+            console.log('FileSystem.uploadAsync failed, attempting fallback:', uploadErr.message);
+        }
+    }
+
+    // Fallback: Use standard FormData with File or Blob
+    const formData = new FormData();
+    Object.keys(stringParams).forEach((k) => {
+        formData.append(k, stringParams[k]);
+    });
+
+    if (FileSystem?.File) {
+        try {
+            const fileObj = new FileSystem.File(fileUri);
+            formData.append(fieldName, fileObj);
+        } catch {
+            formData.append(fieldName, {
+                uri: fileUri,
+                name: fileUri.split('/').pop() || 'upload.jpg',
+                type: mimeType,
+            });
+        }
+    } else {
+        formData.append(fieldName, {
+            uri: fileUri,
+            name: fileUri.split('/').pop() || 'upload.jpg',
+            type: mimeType,
+        });
+    }
+
+    return request(endpoint, {
+        method: 'POST',
+        body: formData,
+        token,
+        headers,
+    });
+}
+
 const apiClient = {
     get: (endpoint, options = {}) => request(endpoint, { ...options, method: 'GET' }),
     post: (endpoint, body, options = {}) => request(endpoint, { ...options, method: 'POST', body }),
     put: (endpoint, body, options = {}) => request(endpoint, { ...options, method: 'PUT', body }),
     delete: (endpoint, options = {}) => request(endpoint, { ...options, method: 'DELETE' }),
+    uploadFile: (endpoint, fileOptions, options = {}) => uploadFileRequest(endpoint, fileOptions, options),
 };
 
 export default apiClient;

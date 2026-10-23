@@ -13,7 +13,7 @@ import ScreenHeader from "../components/ScreenHeader";
 import KeyboardAwareScrollView from "../components/KeyboardAwareScrollView";
 import { useAuth } from "../contexts/AuthContext";
 import memberService from "../services/memberService";
-import { COLORS, FONTS } from "../theme";
+import { COLORS, FONTS, DEFAULT_AVATAR } from "../theme";
 
 const REASONS = [
     "I found my life partner",
@@ -33,7 +33,6 @@ export default function DeleteAccountScreen({ navigation }) {
     const userEmail = user?.email || "";
     const userPhone = user?.phone || "";
     const userAvatar = user?.avatar_original || user?.avatar || null;
-    const userInitial = fullName.charAt(0).toUpperCase() || "M";
 
     const handleDelete = async () => {
         if (!confirmed) {
@@ -84,19 +83,12 @@ export default function DeleteAccountScreen({ navigation }) {
 
     return (
         <SafeAreaView style={styles.safeArea} edges={["top", "left", "right"]}>
-            <ScreenHeader>
-                <View style={styles.headerRow}>
-                    <TouchableOpacity
-                        style={styles.backBtn}
-                        onPress={() => navigation.goBack()}
-                        disabled={loading}
-                    >
-                        <Text style={styles.backText}>←</Text>
-                    </TouchableOpacity>
-                    <Text style={styles.headerTitle}>Delete Account</Text>
-                    <View style={{ width: 36 }} />
-                </View>
-            </ScreenHeader>
+            <ScreenHeader
+                title="Delete Account"
+                subtitle="Permanent account deletion"
+                showBack
+                onBack={() => navigation.goBack()}
+            />
 
             <KeyboardAwareScrollView
                 contentContainerStyle={styles.scroll}
@@ -105,13 +97,11 @@ export default function DeleteAccountScreen({ navigation }) {
                 {/* User Summary Card */}
                 <View style={styles.userCard}>
                     <View style={styles.avatarWrap}>
-                        {userAvatar ? (
-                            <Image source={{ uri: userAvatar }} style={styles.avatarImg} />
-                        ) : (
-                            <View style={styles.avatarPlaceholder}>
-                                <Text style={styles.avatarInitial}>{userInitial}</Text>
-                            </View>
-                        )}
+                        <Image
+                            source={{ uri: userAvatar || DEFAULT_AVATAR }}
+                            style={styles.avatarImg}
+                            resizeMode="cover"
+                        />
                     </View>
                     <View style={styles.userInfo}>
                         <Text style={styles.userName}>{fullName}</Text>

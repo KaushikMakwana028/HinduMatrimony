@@ -20,3 +20,6 @@ export const FONTS = {
     semiBold: "Poppins_600SemiBold",
     bold: "Poppins_700Bold",
 };
+
+export const DEFAULT_AVATAR = "https://hindumatrimony.org.in/public/assets/img/avatar-place.png";
+export const DEFAULT_FEMALE_AVATAR = "https://hindumatrimony.org.in/public/assets/img/female-avatar-place.png";

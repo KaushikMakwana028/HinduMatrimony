@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "HinduMatrimony",
+    "name": "Hindu Matrimony",
     "slug": "HinduMatrimony",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -24,7 +24,8 @@
     "plugins": [
       "expo-font",
       "expo-splash-screen",
-      "expo-secure-store"
+      "expo-secure-store",
+      "expo-status-bar"
     ]
   }
 }

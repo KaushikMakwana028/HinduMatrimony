@@ -1,10 +1,21 @@
 import apiClient, { ApiError } from './apiClient';
 import { ENDPOINTS } from '../config/api';
 
+let cachedSettingsResponse = null;
+let inFlightSettingsPromise = null;
+
 /**
  * Service for handling Profile and member profile data
  */
 const profileService = {
+    /**
+     * Clear cached settings (e.g. on logout or refresh)
+     */
+    clearSettingsCache() {
+        cachedSettingsResponse = null;
+        inFlightSettingsPromise = null;
+    },
+
     /**
      * Get member profile details by user ID
      * @param {string|number} userId
@@ -13,6 +24,9 @@ const profileService = {
     async getProfile(userId, token) {
         if (!userId) {
             throw new ApiError('User ID is required to fetch profile', 400);
+        }
+        if (!token) {
+            throw new ApiError('Authentication token is required', 401);
         }
 
         const endpoint = typeof ENDPOINTS.MEMBER_PROFILE === 'function'
@@ -33,10 +47,135 @@ const profileService = {
     },
 
     /**
-     * Alias for getProfile
+     * Get member profile settings (authenticated user's full configuration & details)
+     * Contains countries, states, cities, religions, castes, sub_castes,
+     * marital_statuses, on_behalves, family_values, languages, member info.
+     * @param {string} token
+     * @param {boolean} forceRefresh
+     */
+    async getProfileSettings(token, forceRefresh = false) {
+        if (!token) {
+            throw new ApiError('Authentication token is required', 401);
+        }
+
+        if (!forceRefresh && cachedSettingsResponse) {
+            return cachedSettingsResponse;
+        }
+
+        if (!forceRefresh && inFlightSettingsPromise) {
+            return inFlightSettingsPromise;
+        }
+
+        inFlightSettingsPromise = (async () => {
+            try {
+                const response = await apiClient.get(
+                    ENDPOINTS.MEMBER_PROFILE_SETTINGS || '/member/profile-settings',
+                    { token, timeout: 60000 }
+                );
+
+                if (response && response.result === false) {
+                    throw new ApiError(response.message || 'Failed to fetch profile settings', 400, response);
+                }
+
+                cachedSettingsResponse = response;
+                return response;
+            } finally {
+                inFlightSettingsPromise = null;
+            }
+        })();
+
+        return inFlightSettingsPromise;
+    },
+
+    /**
+     * Comprehensive profile fetcher for the logged in user:
+     * Attempts to query both public profile and internal profile settings,
+     * merging all available sections so no fields are missing even if email verification is pending.
+     * @param {string|number} userId
+     * @param {string} token
      */
     async getMyProfile(userId, token) {
-        return this.getProfile(userId, token);
+        if (!token) {
+            throw new ApiError('Authentication token is required', 401);
+        }
+
+        let publicData = null;
+        let settingsData = null;
+        let fetchError = null;
+
+        const results = await Promise.allSettled([
+            this.getProfile(userId, token),
+            this.getProfileSettings(token),
+        ]);
+
+        if (results[0].status === 'fulfilled' && results[0].value?.data) {
+            publicData = results[0].value.data;
+        } else if (results[0].status === 'rejected') {
+            fetchError = results[0].reason;
+        }
+
+        if (results[1].status === 'fulfilled' && results[1].value) {
+            settingsData = results[1].value.data || results[1].value;
+        }
+
+        // If at least one responded with data, merge them cleanly
+        if (publicData || settingsData) {
+            const memberObj = settingsData?.member || {};
+            const pubBasic = publicData?.basic_info || {};
+
+            return {
+                result: true,
+                data: {
+                    ...(publicData || {}),
+                    ...(settingsData || {}),
+                    basic_info: {
+                        ...memberObj,
+                        ...(settingsData?.basic_info || {}),
+                        ...pubBasic,
+                        // Ensure essential fields are preserved
+                        first_name: pubBasic.first_name || pubBasic.firs_name || memberObj.first_name || memberObj.firs_name || '',
+                        last_name: pubBasic.last_name || memberObj.last_name || '',
+                        gender: pubBasic.gender || memberObj.gender || '',
+                        date_of_birth: pubBasic.date_of_birth || memberObj.date_of_birth || memberObj.birthday || '',
+                        age: pubBasic.age || memberObj.age,
+                        marital_status: pubBasic.maritial_status || pubBasic.marital_status || memberObj.marital_status || memberObj.maritial_status || '',
+                        on_behalf: pubBasic.on_behalf || pubBasic.onbehalf || memberObj.on_behalf || memberObj.onbehalf || '',
+                        phone: pubBasic.phone || memberObj.phone || publicData?.contact_details?.phone || '',
+                        email: pubBasic.email || memberObj.email || publicData?.contact_details?.email || '',
+                        photo: pubBasic.photo || memberObj.photo || publicData?.avatar || '',
+                        code: pubBasic.code || memberObj.code || '',
+                    },
+                    contact_details: {
+                        ...(settingsData?.contact_details || {}),
+                        ...(publicData?.contact_details || {}),
+                        email: publicData?.contact_details?.email || memberObj.email || '',
+                        phone: publicData?.contact_details?.phone || memberObj.phone || '',
+                    },
+                    present_address: publicData?.present_address || settingsData?.present_address,
+                    permanent_address: publicData?.permanent_address || settingsData?.permanent_address,
+                    spiritual_background: publicData?.spiritual_backgrounds || publicData?.spiritual_background || settingsData?.spiritual_background || settingsData?.spiritual_backgrounds,
+                    physical_attributes: publicData?.physical_attributes || settingsData?.physical_attributes,
+                    education: publicData?.education || settingsData?.education || [],
+                    career: publicData?.career || settingsData?.career || [],
+                    hobbies_interest: publicData?.hobbies_interest || settingsData?.hobbies_interest,
+                    attitude_behavior: publicData?.attitude_behavior || settingsData?.attitude_behavior,
+                    residence_info: publicData?.residence_info || settingsData?.residence_info,
+                    lifestyles: publicData?.lifestyles || publicData?.lifestyle || settingsData?.lifestyles || settingsData?.lifestyle,
+                    astrologies: publicData?.astrologies || settingsData?.astrologies,
+                    families_information: publicData?.families_information || settingsData?.families_information,
+                    partner_expectation: publicData?.partner_expectation || settingsData?.partner_expectation,
+                    introduction: publicData?.intoduction?.introduction ?? (publicData?.introduction || settingsData?.introduction || ''),
+                    mother_tongue: publicData?.mother_tongue || pubBasic.mothere_tongue || settingsData?.mother_tongue || '',
+                    known_languages: publicData?.known_languages || settingsData?.known_languages || '',
+                },
+            };
+        }
+
+        if (fetchError) {
+            throw fetchError;
+        }
+
+        return { result: false, message: 'No profile information found' };
     },
 };
 
