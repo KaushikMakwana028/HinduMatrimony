@@ -16,46 +16,63 @@ import planService from "../services/planService";
 import { subscribeMemberAction } from "../services/memberEvents";
 import { COLORS, FONTS, DEFAULT_AVATAR } from "../theme";
 
+// Returns the first usable value; treats undefined, null and "" as missing
+const pick = (...vals) => vals.find((v) => v !== undefined && v !== null && v !== "");
+
 export default function HomeScreen({ navigation }) {
     const { user, token } = useAuth();
     const [dashboardData, setDashboardData] = useState(null);
     const [planInfo, setPlanInfo] = useState(null);
     const [emailUnverified, setEmailUnverified] = useState(false);
+    const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
 
-    useEffect(() => {
-        let isMounted = true;
+    // Single loader used by both first load and pull-to-refresh
+    const loadData = useCallback(async () => {
         if (!token) return;
 
-        (async () => {
-            try {
-                const [dashRes, planRes] = await Promise.allSettled([
-                    homeService.getDashboardData(token),
-                    planService.getActivePlan(user, null, token),
-                ]);
-                if (!isMounted) return;
+        const [dashRes, planRes] = await Promise.allSettled([
+            homeService.getDashboardData(token),
+            planService.getActivePlan(user, null, token),
+        ]);
 
-                if (dashRes.status === "fulfilled" && dashRes.value && dashRes.value.result !== false && dashRes.value.data) {
-                    setDashboardData(dashRes.value.data);
-                    setEmailUnverified(false);
-                }
-                if (planRes.status === "fulfilled" && planRes.value) {
-                    setPlanInfo(planRes.value);
-                }
-            } catch (err) {
-                if (/not verified/i.test(err?.message)) {
-                    if (isMounted) setEmailUnverified(true);
-                    console.log("Dashboard: Account email pending verification.");
-                } else {
-                    console.log("Could not fetch dashboard data:", err.message);
-                }
+        // Dashboard API is the source of truth
+        if (dashRes.status === "fulfilled") {
+            const d = dashRes.value;
+            if (d && d.result !== false && d.data) {
+                setDashboardData(d.data);
+                setEmailUnverified(false);
             }
-        })();
+        } else if (/not verified/i.test(dashRes.reason?.message || "")) {
+            // allSettled never throws, so the error lives in dashRes.reason
+            setEmailUnverified(true);
+            console.log("Dashboard: Account email pending verification.");
+        } else {
+            console.log("Could not fetch dashboard data:", dashRes.reason?.message);
+        }
 
+        // Plan service is only a fallback
+        if (planRes.status === "fulfilled" && planRes.value) {
+            setPlanInfo(planRes.value);
+        }
+    }, [token, user?.id]);
+
+    useEffect(() => {
+        let active = true;
+        setLoading(true);
+        loadData().finally(() => {
+            if (active) setLoading(false);
+        });
         return () => {
-            isMounted = false;
+            active = false;
         };
-    }, [token, user]);
+    }, [loadData]);
+
+    const onRefresh = useCallback(async () => {
+        setRefreshing(true);
+        await loadData();
+        setRefreshing(false);
+    }, [loadData]);
 
     // Live update when contacts or quota are used or photo updated
     useEffect(() => {
@@ -71,92 +88,52 @@ export default function HomeScreen({ navigation }) {
         return () => unsub();
     }, []);
 
-    const onRefresh = useCallback(async () => {
-        if (!token) return;
-        setRefreshing(true);
-        try {
-            const [dashRes, planRes] = await Promise.allSettled([
-                homeService.getDashboardData(token),
-                planService.getActivePlan(user, null, token),
-            ]);
-            if (dashRes.status === "fulfilled" && dashRes.value && dashRes.value.result !== false && dashRes.value.data) {
-                setDashboardData(dashRes.value.data);
-                setEmailUnverified(false);
-            }
-            if (planRes.status === "fulfilled" && planRes.value) {
-                setPlanInfo(planRes.value);
-            }
-        } catch (err) {
-            if (/not verified/i.test(err?.message)) {
-                setEmailUnverified(true);
-                console.log("Dashboard: Account email pending verification.");
-            } else {
-                console.log("Could not refresh dashboard data:", err.message);
-            }
-        } finally {
-            setRefreshing(false);
-        }
-    }, [token, user]);
+    // "…" while loading, "—" when the API has no value
+    const show = (v) => (v === undefined ? (loading ? "…" : "—") : v);
 
-    // Extract dynamic fields with fallback
-    const rawName = dashboardData?.member_name || user?.name || "Welcome back";
-    const firstName = rawName.split(" ")[0];
-    const memberPhoto = dashboardData?.member_photo || user?.avatar_original || user?.avatar;
+    // ---------- Derived fields ----------
+    const rawName = pick(dashboardData?.member_name, user?.name) || "Welcome back";
+    const firstName = String(rawName).split(" ")[0];
+    const memberPhoto = pick(dashboardData?.member_photo, user?.avatar_original, user?.avatar);
 
     const packageInfo = dashboardData?.current_package_info;
-    const packageName = planInfo?.name || packageInfo?.package_name || (user?.membership ? "Silver Package" : "Free Package");
+    const packageName =
+        pick(packageInfo?.package_name, planInfo?.name) || (loading ? "Loading…" : "Free Package");
     const packageExpiry = packageInfo?.package_expiry;
 
-    const remainingInterest = planInfo?.remainingInterests !== undefined
-        ? planInfo.remainingInterests
-        : (dashboardData?.remaining_interest !== undefined
-            ? dashboardData.remaining_interest
-            : 30);
-
-    const remainingContact = planInfo?.remainingContacts !== undefined
-        ? planInfo.remainingContacts
-        : (dashboardData?.remaining_contact_view !== undefined
-            ? dashboardData.remaining_contact_view
-            : 30);
-
-    const remainingGallery = planInfo?.maxGallery !== undefined
-        ? planInfo.maxGallery
-        : (dashboardData?.remaining_photo_gallery !== undefined
-            ? dashboardData.remaining_photo_gallery
-            : 5);
-
-    const remainingProfileView = (dashboardData?.remaining_profile_image_view !== undefined && dashboardData.remaining_profile_image_view !== "")
-        ? dashboardData.remaining_profile_image_view
-        : (dashboardData?.remaining_gallery_image_view !== undefined && dashboardData.remaining_gallery_image_view !== ""
-            ? dashboardData.remaining_gallery_image_view
-            : 15);
+    const remainingInterest = pick(dashboardData?.remaining_interest, planInfo?.remainingInterests);
+    const remainingContact = pick(dashboardData?.remaining_contact_view, planInfo?.remainingContacts);
+    const remainingGallery = pick(dashboardData?.remaining_photo_gallery, planInfo?.maxGallery);
+    const remainingProfileView = pick(
+        dashboardData?.remaining_profile_viewer_view
+    );
 
     const stats = [
         {
             key: "interest",
             label: "Remaining Interest",
-            value: remainingInterest,
+            value: show(remainingInterest),
             icon: "💖",
             subtitle: "Interests you can send",
         },
         {
             key: "contact",
             label: "Remaining Contact View",
-            value: remainingContact,
+            value: show(remainingContact),
             icon: "📞",
             subtitle: "Contacts you can view",
         },
         {
             key: "profileViewer",
             label: "Remaining Profile Viewer",
-            value: remainingProfileView,
+            value: show(remainingProfileView),
             icon: "👁️",
             subtitle: "Profiles you can view",
         },
         {
             key: "gallery",
             label: "Remaining Gallery Upload",
-            value: remainingGallery,
+            value: show(remainingGallery),
             icon: "🖼️",
             subtitle: "Gallery images to upload",
         },
@@ -280,18 +257,10 @@ const styles = StyleSheet.create({
         borderWidth: 2,
         borderColor: COLORS.primarySoft,
     },
-    avatar: {
-        width: "100%",
-        height: "100%",
-        backgroundColor: COLORS.primary,
-        alignItems: "center",
-        justifyContent: "center",
-    },
     avatarImg: {
         width: "100%",
         height: "100%",
     },
-    avatarText: { color: "#fff", fontSize: 17, fontFamily: FONTS.bold },
 
     scroll: { padding: 20, paddingBottom: 40 },
 

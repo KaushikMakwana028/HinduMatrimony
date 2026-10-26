@@ -154,7 +154,7 @@ export default function ProfileScreen({ navigation }) {
                 if (user?.id && token) {
                     profileService.getMyProfile(user.id, token).then((res) => {
                         if (res?.data) setProfileData(res.data);
-                    }).catch(() => {});
+                    }).catch(() => { });
                 }
             }
         });
@@ -249,6 +249,9 @@ export default function ProfileScreen({ navigation }) {
         }
         if (route === "MyInterest" || route === "Interests") {
             return navigation.navigate("MyInterest");
+        }
+        if (route === "ProfileViewer") {
+            return navigation.navigate("ProfileViewer");
         }
         if (navigation?.navigate) {
             try {

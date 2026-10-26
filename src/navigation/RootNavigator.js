@@ -17,6 +17,7 @@ import IgnoredUsersScreen from "../screens/IgnoredUsersScreen";
 import MyInterestScreen from "../screens/MyInterestScreen";
 import { useAuth } from "../contexts/AuthContext";
 import { COLORS } from "../theme";
+import ProfileViewerScreen from "../screens/ProfileViewerScreen";
 
 const Stack = createNativeStackNavigator();
 
@@ -61,6 +62,7 @@ export default function RootNavigator() {
       <Stack.Screen name="IgnoredUserList" component={IgnoredUsersScreen} />
       <Stack.Screen name="MyInterest" component={MyInterestScreen} />
       <Stack.Screen name="Interests" component={MyInterestScreen} />
+      <Stack.Screen name="ProfileViewer" component={ProfileViewerScreen} />
     </Stack.Navigator>
   );
 }

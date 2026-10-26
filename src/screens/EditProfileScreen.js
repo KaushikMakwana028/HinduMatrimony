@@ -44,6 +44,28 @@ const DEFAULT_FAMILY_VALUES = [
     { id: 3, name: "Liberal" },
 ];
 
+const has = (v) => v !== null && v !== undefined && v !== "";
+
+// Turns an id, an {id, name} object, or a plain name ("Hindu") into the option id.
+// Returns null when nothing matches.
+const resolveId = (list, value) => {
+    if (!has(value)) return null;
+    const raw = typeof value === "object" ? (value.id ?? value.name) : value;
+    if (!has(raw)) return null;
+
+    const items = list || [];
+    const byId = items.find((x) => String(x.id) === String(raw));
+    if (byId) return byId.id;
+
+    const needle = String(raw).trim().toLowerCase();
+    const byName = items.find((x) => String(x.name).trim().toLowerCase() === needle);
+    if (byName) return byName.id;
+
+    // Object with an id that is not in the list (e.g. { id: 1, name: "My Self" })
+    if (typeof value === "object" && has(value.id)) return value.id;
+    return null;
+};
+
 export default function EditProfileScreen({ navigation, route }) {
     const { user, token, updateUser } = useAuth();
     const initialSection = route?.params?.section || "basic";
@@ -469,8 +491,58 @@ export default function EditProfileScreen({ navigation, route }) {
                     setServerSettings(settingsRes.value.data || settingsRes.value);
                 }
 
+                if (profileRes.status === "rejected") {
+                    console.log("Could not fetch profile:", profileRes.reason?.message);
+                }
+
                 if (isMounted && profileRes.status === "fulfilled" && profileRes.value?.data) {
                     const d = profileRes.value.data;
+
+                    // Option lists used to convert names from the API into ids
+                    const settings = settingsRes.status === "fulfilled" && settingsRes.value
+                        ? (settingsRes.value.data || settingsRes.value)
+                        : null;
+                    const lists = {
+                        countries: settings?.countries || [],
+                        states: settings?.states || [],
+                        cities: settings?.cities || [],
+                        religions: settings?.religions || [],
+                        castes: settings?.castes || [],
+                        subCastes: settings?.sub_castes || [],
+                        marital: settings?.marital_statuses?.length ? settings.marital_statuses : DEFAULT_MARITAL_STATUSES,
+                        onBehalf: settings?.on_behalves?.length ? settings.on_behalves : DEFAULT_ON_BEHALVES,
+                        familyValues: settings?.family_values?.length ? settings.family_values : DEFAULT_FAMILY_VALUES,
+                    };
+
+                    // Names that could not be matched to an option (logged once at the end)
+                    const unresolved = [];
+                    const resolve = (label, list, value) => {
+                        const id = resolveId(list, value);
+                        if (id === null && has(value)) {
+                            unresolved.push(`${label}: ${typeof value === "object" ? value.name : value}`);
+                        }
+                        return id;
+                    };
+
+                    // Address from the API has names (country/state/city), the form uses ids
+                    const addressFields = (a) => {
+                        const out = {};
+                        const countryId = resolve("country", lists.countries, a.country_id ?? a.country);
+                        const statePool = countryId
+                            ? lists.states.filter((s) => String(s.country_id) === String(countryId))
+                            : lists.states;
+                        const stateId = resolve("state", statePool.length ? statePool : lists.states, a.state_id ?? a.state);
+                        const cityPool = stateId
+                            ? lists.cities.filter((c) => String(c.state_id) === String(stateId))
+                            : lists.cities;
+                        const cityId = resolve("city", cityPool.length ? cityPool : lists.cities, a.city_id ?? a.city);
+
+                        if (countryId !== null) out.country_id = countryId;
+                        if (stateId !== null) out.state_id = stateId;
+                        if (cityId !== null) out.city_id = cityId;
+                        if (has(a.postal_code)) out.postal_code = String(a.postal_code);
+                        return out;
+                    };
 
                     // Introduction
                     if (d.introduction || d.intoduction?.introduction) {
@@ -480,17 +552,24 @@ export default function EditProfileScreen({ navigation, route }) {
                     // Basic Info
                     if (d.basic_info) {
                         const b = d.basic_info;
+                        const maritalId = resolve("marital status", lists.marital, b.marital_status ?? b.maritial_status);
+                        const onBehalfId = resolve("on behalf", lists.onBehalf, b.on_behalf ?? b.onbehalf);
+
                         setBasicInfo((prev) => ({
                             ...prev,
                             first_name: b.first_name || b.firs_name || prev.first_name,
                             last_name: b.last_name || prev.last_name,
                             gender: b.gender || prev.gender,
                             date_of_birth: b.date_of_birth || b.birthday || prev.date_of_birth,
-                            marital_status: b.marital_status || b.maritial_status || prev.marital_status,
-                            children: b.children !== undefined ? String(b.children) : (b.no_of_children !== undefined ? String(b.no_of_children) : prev.children),
-                            on_behalf: b.on_behalf || b.onbehalf || prev.on_behalf,
-                            phone: b.phone || prev.phone,
-                            email: b.email || prev.email,
+                            marital_status: maritalId ?? prev.marital_status,
+                            children: has(b.children)
+                                ? String(b.children)
+                                : has(b.no_of_children)
+                                    ? String(b.no_of_children)
+                                    : prev.children,
+                            on_behalf: onBehalfId ?? prev.on_behalf,
+                            phone: b.phone || d.contact_details?.phone || prev.phone,
+                            email: b.email || d.contact_details?.email || prev.email,
                         }));
                         if (b.code) {
                             setMemberCode(String(b.code));
@@ -508,30 +587,14 @@ export default function EditProfileScreen({ navigation, route }) {
 
                     // Present Address
                     if (d.present_address) {
-                        setPresentAddress((prev) => ({
-                            ...prev,
-                            country_id: d.present_address.country_id || prev.country_id,
-                            state_id: d.present_address.state_id || prev.state_id,
-                            city_id: d.present_address.city_id || prev.city_id,
-                            postal_code:
-                                d.present_address.postal_code !== null && d.present_address.postal_code !== undefined
-                                    ? String(d.present_address.postal_code)
-                                    : prev.postal_code || "",
-                        }));
+                        const fields = addressFields(d.present_address);
+                        setPresentAddress((prev) => ({ ...prev, ...fields }));
                     }
 
                     // Permanent Address
                     if (d.permanent_address) {
-                        setPermanentAddress((prev) => ({
-                            ...prev,
-                            country_id: d.permanent_address.country_id || prev.country_id,
-                            state_id: d.permanent_address.state_id || prev.state_id,
-                            city_id: d.permanent_address.city_id || prev.city_id,
-                            postal_code:
-                                d.permanent_address.postal_code !== null && d.permanent_address.postal_code !== undefined
-                                    ? String(d.permanent_address.postal_code)
-                                    : prev.postal_code || "",
-                        }));
+                        const fields = addressFields(d.permanent_address);
+                        setPermanentAddress((prev) => ({ ...prev, ...fields }));
                     }
 
                     // Physical
@@ -605,14 +668,34 @@ export default function EditProfileScreen({ navigation, route }) {
                     // Spiritual
                     if (d.spiritual_background || d.spiritual_backgrounds) {
                         const s = d.spiritual_background || d.spiritual_backgrounds;
+
+                        const religionId = resolve("religion", lists.religions, s.member_religion_id ?? s.religion_id);
+                        const castePool = religionId
+                            ? lists.castes.filter((c) => String(c.religion_id) === String(religionId))
+                            : lists.castes;
+                        const casteId = resolve(
+                            "caste",
+                            castePool.length ? castePool : lists.castes,
+                            s.member_caste_id ?? s.caste_id
+                        );
+                        const subPool = casteId
+                            ? lists.subCastes.filter((sc) => String(sc.caste_id) === String(casteId))
+                            : lists.subCastes;
+                        const subCasteId = resolve(
+                            "sub-caste",
+                            subPool.length ? subPool : lists.subCastes,
+                            s.member_sub_caste_id ?? s.sub_caste_id
+                        );
+                        const familyValueId = resolve("family value", lists.familyValues, s.family_value_id);
+
                         setSpiritual((prev) => ({
                             ...prev,
-                            member_religion_id: s.member_religion_id || prev.member_religion_id,
-                            member_caste_id: s.member_caste_id || prev.member_caste_id,
-                            member_sub_caste_id: s.member_sub_caste_id || prev.member_sub_caste_id,
+                            member_religion_id: religionId ?? prev.member_religion_id,
+                            member_caste_id: casteId ?? prev.member_caste_id,
+                            member_sub_caste_id: subCasteId ?? prev.member_sub_caste_id,
                             ethnicity: s.ethnicity || prev.ethnicity,
                             personal_value: s.personal_value || prev.personal_value,
-                            family_value_id: s.family_value_id || prev.family_value_id,
+                            family_value_id: familyValueId ?? prev.family_value_id,
                             community_value: s.community_value || prev.community_value,
                         }));
                     }
@@ -680,6 +763,10 @@ export default function EditProfileScreen({ navigation, route }) {
                             partner_state_id: pe.partner_state_id || prev.partner_state_id,
                             pertner_complexion: pe.pertner_complexion || prev.pertner_complexion,
                         }));
+                    }
+
+                    if (unresolved.length) {
+                        console.log("EditProfile: could not match to options ->", unresolved.join(" | "));
                     }
                 }
             } catch (err) {
@@ -1727,7 +1814,11 @@ export default function EditProfileScreen({ navigation, route }) {
                         </View>
                         <View style={styles.sectionTitleCol}>
                             <Text style={styles.sectionTitle}>Physical Attributes</Text>
-                            <Text style={styles.sectionStatus}>{physical.height} ft • {physical.weight} kg</Text>
+                            <Text style={styles.sectionStatus}>
+                                {physical.height && physical.weight
+                                    ? `${physical.height} ft • ${physical.weight} kg`
+                                    : "Height, weight & body type"}
+                            </Text>
                         </View>
                         <Ionicons
                             name={expandedSection === "physical" ? "chevron-up" : "chevron-down"}
@@ -1998,11 +2089,10 @@ export default function EditProfileScreen({ navigation, route }) {
                             <Text style={styles.sectionTitle}>Spiritual & Community Background</Text>
                             <Text style={styles.sectionStatus}>
                                 {spiritual.member_religion_id
-                                    ? `${getOptionName(religionList, spiritual.member_religion_id, "Religion")}${
-                                          spiritual.member_caste_id
-                                              ? ` • ${getOptionName(casteList, spiritual.member_caste_id, "")}`
-                                              : ""
-                                      }`
+                                    ? `${getOptionName(religionList, spiritual.member_religion_id, "Religion")}${spiritual.member_caste_id
+                                        ? ` • ${getOptionName(casteList, spiritual.member_caste_id, "")}`
+                                        : ""
+                                    }`
                                     : "Religion, Caste & Values"}
                             </Text>
                         </View>
@@ -2236,7 +2326,13 @@ export default function EditProfileScreen({ navigation, route }) {
                         </View>
                         <View style={styles.sectionTitleCol}>
                             <Text style={styles.sectionTitle}>Lifestyle & Habits</Text>
-                            <Text style={styles.sectionStatus}>{lifestyle.diet}, Living with {lifestyle.living_with}</Text>
+                            <Text style={styles.sectionStatus}>
+                                {lifestyle.diet || lifestyle.living_with
+                                    ? [lifestyle.diet, lifestyle.living_with ? `Living with ${lifestyle.living_with}` : ""]
+                                        .filter(Boolean)
+                                        .join(", ")
+                                    : "Diet, drink, smoke & living"}
+                            </Text>
                         </View>
                         <Ionicons
                             name={expandedSection === "lifestyle" ? "chevron-up" : "chevron-down"}
@@ -2360,7 +2456,11 @@ export default function EditProfileScreen({ navigation, route }) {
                         </View>
                         <View style={styles.sectionTitleCol}>
                             <Text style={styles.sectionTitle}>Astronomic / Horoscope</Text>
-                            <Text style={styles.sectionStatus}>{astronomic.sun_sign} • {astronomic.moon_sign}</Text>
+                            <Text style={styles.sectionStatus}>
+                                {astronomic.sun_sign || astronomic.moon_sign
+                                    ? [astronomic.sun_sign, astronomic.moon_sign].filter(Boolean).join(" • ")
+                                    : "Sun sign, moon sign & birth time"}
+                            </Text>
                         </View>
                         <Ionicons
                             name={expandedSection === "astronomic" ? "chevron-up" : "chevron-down"}

@@ -8,6 +8,7 @@ const API_CONFIG = {
         MEMBER_DASHBOARD: '/member/dashboard',
         MEMBER_PROFILE: (id) => `/member/public-profile/${id}`,
         MEMBER_PROFILE_SETTINGS: '/member/profile-settings',
+        PROFILE_VIEWERS: '/member/profile-viewers',
         MEMBER_LISTING: '/member/member-listing',
         EXPRESS_INTEREST: '/member/express-interest',
         INTEREST_ACCEPT: '/member/interest-accept',
