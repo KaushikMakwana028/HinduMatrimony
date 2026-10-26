@@ -2,42 +2,48 @@ import { useState, useEffect } from "react";
 import { Keyboard, Platform } from "react-native";
 
 /**
- * Hook to dynamically calculate bottom scroll padding when the keyboard opens.
- * Allows the user to freely scroll to the bottom of the screen (past inputs, checkboxes, buttons)
- * without the keyboard covering the content or violently jumping.
+ * Hook that exposes keyboard state and a comfortable bottom scroll padding.
+ *
+ * KeyboardAwareScrollView now shrinks itself above the keyboard (and never double-shifts
+ * when Android already resized the window). So this hook must NOT add the full keyboard
+ * height to the content padding anymore – that was what pushed content far away / made
+ * the scroll jump. It now only adds a small comfortable extra space while typing.
+ *
+ * Same API as before: { paddingBottom, isKeyboardVisible } (+ keyboardHeight).
  *
  * @param {number} basePadding - Default padding when keyboard is hidden
- * @param {number} extraOffset - Extra margin above the keyboard
+ * @param {number} extraOffset - Extra breathing room while the keyboard is visible
  */
 function useKeyboardPadding(basePadding = 40, extraOffset = 30) {
-    const [paddingBottom, setPaddingBottom] = useState(basePadding);
-    const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
 
-    useEffect(() => {
-        const showEvent = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
-        const hideEvent = Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
+  useEffect(() => {
+    const showEvent =
+      Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+    const hideEvent =
+      Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
 
-        const onShow = (event) => {
-            const keyboardHeight = event?.endCoordinates?.height || 280;
-            setPaddingBottom(keyboardHeight + extraOffset);
-            setIsKeyboardVisible(true);
-        };
+    const showListener = Keyboard.addListener(showEvent, (event) => {
+      setKeyboardHeight(event?.endCoordinates?.height || 0);
+      setIsKeyboardVisible(true);
+    });
+    const hideListener = Keyboard.addListener(hideEvent, () => {
+      setKeyboardHeight(0);
+      setIsKeyboardVisible(false);
+    });
 
-        const onHide = () => {
-            setPaddingBottom(basePadding);
-            setIsKeyboardVisible(false);
-        };
+    return () => {
+      showListener.remove();
+      hideListener.remove();
+    };
+  }, []);
 
-        const showListener = Keyboard.addListener(showEvent, onShow);
-        const hideListener = Keyboard.addListener(hideEvent, onHide);
+  const paddingBottom = isKeyboardVisible
+    ? basePadding + extraOffset
+    : basePadding;
 
-        return () => {
-            showListener.remove();
-            hideListener.remove();
-        };
-    }, [basePadding, extraOffset]);
-
-    return { paddingBottom, isKeyboardVisible };
+  return { paddingBottom, isKeyboardVisible, keyboardHeight };
 }
 
 export default useKeyboardPadding;

@@ -6,7 +6,6 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   Alert,
-  StatusBar,
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -14,6 +13,7 @@ import KeyboardAwareScrollView from "../components/KeyboardAwareScrollView";
 import ScreenHeader from "../components/ScreenHeader";
 import { useAuth } from "../contexts/AuthContext";
 import memberService from "../services/memberService";
+import { emitMemberAction } from "../services/memberEvents";
 import { COLORS, FONTS } from "../theme";
 
 const DEACTIVATE_REASONS = [
@@ -25,13 +25,72 @@ const DEACTIVATE_REASONS = [
 ];
 
 export default function DeactivateAccountScreen({ navigation }) {
-  const { token, logout } = useAuth();
+  const { user, token, updateUser } = useAuth();
   const insets = useSafeAreaInsets();
+
+  const isDeactivated = Boolean(
+    user?.deactivated === 1 ||
+      user?.deactivation_status === 1 ||
+      user?.is_deactivated === 1
+  );
 
   const [selectedReason, setSelectedReason] = useState("");
   const [confirmed, setConfirmed] = useState(false);
   const [loading, setLoading] = useState(false);
 
+  // Activate Account
+  const handleActivate = async () => {
+    Alert.alert(
+      "Activate Account",
+      "Are you sure you want to activate your account? Your profile will be visible to potential matches again.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Activate Account",
+          onPress: async () => {
+            setLoading(true);
+            try {
+              const response = await memberService.deactivateAccount(token, {
+                deacticvation_status: 0,
+                deactivation_status: 0,
+              });
+
+              if (updateUser) {
+                await updateUser({
+                  deactivated: 0,
+                  deactivation_status: 0,
+                  is_deactivated: 0,
+                });
+              }
+              emitMemberAction({ type: "profile_updated" });
+
+              Alert.alert(
+                "Account Activated 🎉",
+                response?.message ||
+                  "Your profile is now active and visible to matches.",
+                [
+                  {
+                    text: "View Profile",
+                    onPress: () => navigation.goBack(),
+                  },
+                ]
+              );
+            } catch (err) {
+              console.log("Activate account error:", err?.message);
+              Alert.alert(
+                "Activation Failed",
+                err?.message || "Could not activate account. Please try again."
+              );
+            } finally {
+              setLoading(false);
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  // Deactivate Account
   const handleDeactivate = async () => {
     if (!confirmed) {
       Alert.alert(
@@ -43,7 +102,7 @@ export default function DeactivateAccountScreen({ navigation }) {
 
     Alert.alert(
       "Confirm Deactivation",
-      "Are you sure you want to deactivate your account? Your profile will be hidden from matches, but all your data remains safe. You can log in anytime to reactivate.",
+      "Are you sure you want to deactivate your account? Your profile will be hidden from matches, but all your data remains safe. You can activate it anytime.",
       [
         { text: "Cancel", style: "cancel" },
         {
@@ -54,18 +113,26 @@ export default function DeactivateAccountScreen({ navigation }) {
             try {
               const response = await memberService.deactivateAccount(token, {
                 deacticvation_status: 1,
+                deactivation_status: 1,
               });
 
-              await logout();
+              if (updateUser) {
+                await updateUser({
+                  deactivated: 1,
+                  deactivation_status: 1,
+                  is_deactivated: 1,
+                });
+              }
+              emitMemberAction({ type: "profile_updated" });
 
               Alert.alert(
                 "Account Deactivated",
                 response?.message ||
-                  "Your account is now paused. You can log back in anytime to reactivate your profile.",
+                  "Your account is now paused. You can activate your profile anytime.",
                 [
                   {
                     text: "OK",
-                    onPress: () => navigation.replace("Login"),
+                    onPress: () => navigation.goBack(),
                   },
                 ]
               );
@@ -85,13 +152,15 @@ export default function DeactivateAccountScreen({ navigation }) {
   };
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={["top", "left", "right"]}>
-      <StatusBar barStyle="dark-content" />
-
+    <SafeAreaView style={styles.safeArea} edges={["left", "right"]}>
       {/* Header */}
       <ScreenHeader
-        title="Deactivate Account"
-        subtitle="Pause your profile temporarily"
+        title={isDeactivated ? "Activate Account" : "Deactivate Account"}
+        subtitle={
+          isDeactivated
+            ? "Resume your profile visibility"
+            : "Pause your profile temporarily"
+        }
         showBack
         onBack={() => navigation.goBack()}
       />
@@ -103,123 +172,226 @@ export default function DeactivateAccountScreen({ navigation }) {
         ]}
         showsVerticalScrollIndicator={false}
       >
-        {/* Amber Pause Banner */}
-        <View style={styles.pauseCard}>
-          <View style={styles.pauseIconCircle}>
-            <Ionicons name="pause" size={26} color="#D97706" />
-          </View>
-          <Text style={styles.pauseTitle}>Need a Temporary Break?</Text>
-          <Text style={styles.pauseSubtitle}>
-            Deactivation is temporary. Your profile is paused, not deleted.
-          </Text>
-        </View>
-
-        {/* Benefits/Facts Card */}
-        <View style={styles.card}>
-          <Text style={styles.cardHeading}>What happens when you deactivate:</Text>
-
-          <View style={styles.factRow}>
-            <View style={styles.checkIconWrap}>
-              <Ionicons name="checkmark" size={14} color="#15803D" />
+        {isDeactivated ? (
+          <>
+            {/* Green Activate Banner */}
+            <View style={[styles.pauseCard, styles.activePauseCard]}>
+              <View style={[styles.pauseIconCircle, styles.activeIconCircle]}>
+                <Ionicons name="play-circle" size={28} color="#10B981" />
+              </View>
+              <Text style={styles.pauseTitle}>Your Profile is Currently Paused</Text>
+              <Text style={styles.pauseSubtitle}>
+                Your profile is currently hidden from matches. Activate your profile
+                anytime to start receiving interests and appearing in searches again.
+              </Text>
             </View>
-            <Text style={styles.factText}>
-              Your profile will be hidden from searches and match listings immediately.
-            </Text>
-          </View>
 
-          <View style={styles.factRow}>
-            <View style={styles.checkIconWrap}>
-              <Ionicons name="checkmark" size={14} color="#15803D" />
-            </View>
-            <Text style={styles.factText}>
-              Members will not be able to send you new interests or view your contact.
-            </Text>
-          </View>
+            {/* Benefits of Activating */}
+            <View style={styles.card}>
+              <Text style={styles.cardHeading}>
+                When you activate your account:
+              </Text>
 
-          <View style={styles.factRow}>
-            <View style={styles.checkIconWrap}>
-              <Ionicons name="checkmark" size={14} color="#15803D" />
-            </View>
-            <Text style={styles.factText}>
-              Your uploaded photos, shortlist, and profile details remain 100% saved.
-            </Text>
-          </View>
-
-          <View style={styles.factRow}>
-            <View style={styles.checkIconWrap}>
-              <Ionicons name="checkmark" size={14} color="#15803D" />
-            </View>
-            <Text style={styles.factText}>
-              You can reactivate and restore your profile anytime by simply logging back in.
-            </Text>
-          </View>
-        </View>
-
-        {/* Reasons */}
-        <View style={styles.card}>
-          <Text style={styles.cardHeading}>Please tell us why you are leaving:</Text>
-          {DEACTIVATE_REASONS.map((reason) => {
-            const isSelected = selectedReason === reason;
-            return (
-              <TouchableOpacity
-                key={reason}
-                style={[styles.reasonRow, isSelected && styles.reasonRowSelected]}
-                onPress={() => setSelectedReason(reason)}
-                activeOpacity={0.7}
-              >
-                <View style={[styles.radioCircle, isSelected && styles.radioCircleSelected]}>
-                  {isSelected && <View style={styles.radioDot} />}
+              <View style={styles.factRow}>
+                <View style={styles.checkIconWrap}>
+                  <Ionicons name="checkmark" size={14} color="#15803D" />
                 </View>
-                <Text style={[styles.reasonText, isSelected && styles.reasonTextSelected]}>
-                  {reason}
+                <Text style={styles.factText}>
+                  Your profile will immediately appear in active member searches and recommendations.
                 </Text>
-              </TouchableOpacity>
-            );
-          })}
-        </View>
+              </View>
 
-        {/* Confirmation Checkbox */}
-        <TouchableOpacity
-          style={styles.confirmBox}
-          onPress={() => setConfirmed((prev) => !prev)}
-          activeOpacity={0.7}
-        >
-          <View style={[styles.checkbox, confirmed && styles.checkboxActive]}>
-            {confirmed && <Ionicons name="checkmark" size={16} color="#FFFFFF" />}
-          </View>
-          <Text style={styles.confirmText}>
-            I understand that my profile will be hidden from everyone until I sign back in.
-          </Text>
-        </TouchableOpacity>
+              <View style={styles.factRow}>
+                <View style={styles.checkIconWrap}>
+                  <Ionicons name="checkmark" size={14} color="#15803D" />
+                </View>
+                <Text style={styles.factText}>
+                  Other members can view your profile and express interest in you.
+                </Text>
+              </View>
 
-        {/* Deactivate Button */}
-        <TouchableOpacity
-          style={[
-            styles.deactivateBtn,
-            (!confirmed || loading) && { opacity: 0.6 },
-          ]}
-          onPress={handleDeactivate}
-          disabled={!confirmed || loading}
-          activeOpacity={0.85}
-        >
-          {loading ? (
-            <ActivityIndicator color="#FFFFFF" size="small" />
-          ) : (
-            <>
-              <Ionicons name="pause-circle-outline" size={18} color="#FFFFFF" style={{ marginRight: 6 }} />
-              <Text style={styles.deactivateBtnText}>Deactivate My Account</Text>
-            </>
-          )}
-        </TouchableOpacity>
+              <View style={styles.factRow}>
+                <View style={styles.checkIconWrap}>
+                  <Ionicons name="checkmark" size={14} color="#15803D" />
+                </View>
+                <Text style={styles.factText}>
+                  All your uploaded photos, saved shortlists, and chats remain 100% saved.
+                </Text>
+              </View>
+            </View>
 
-        <TouchableOpacity
-          style={styles.cancelBtn}
-          onPress={() => navigation.goBack()}
-          disabled={loading}
-          activeOpacity={0.7}
-        >
-          <Text style={styles.cancelBtnText}>Keep My Account Active</Text>
-        </TouchableOpacity>
+            {/* Activate Button */}
+            <TouchableOpacity
+              style={[styles.deactivateBtn, { backgroundColor: "#10B981" }]}
+              onPress={handleActivate}
+              disabled={loading}
+              activeOpacity={0.85}
+            >
+              {loading ? (
+                <ActivityIndicator color="#FFFFFF" size="small" />
+              ) : (
+                <>
+                  <Ionicons
+                    name="play-circle-outline"
+                    size={20}
+                    color="#FFFFFF"
+                    style={{ marginRight: 6 }}
+                  />
+                  <Text style={styles.deactivateBtnText}>Activate My Account</Text>
+                </>
+              )}
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.cancelBtn}
+              onPress={() => navigation.goBack()}
+              disabled={loading}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.cancelBtnText}>Keep Account Paused</Text>
+            </TouchableOpacity>
+          </>
+        ) : (
+          <>
+            {/* Amber Pause Banner */}
+            <View style={styles.pauseCard}>
+              <View style={styles.pauseIconCircle}>
+                <Ionicons name="pause" size={26} color="#D97706" />
+              </View>
+              <Text style={styles.pauseTitle}>Need a Temporary Break?</Text>
+              <Text style={styles.pauseSubtitle}>
+                Deactivation is temporary. Your profile is paused, not deleted.
+              </Text>
+            </View>
+
+            {/* Benefits/Facts Card */}
+            <View style={styles.card}>
+              <Text style={styles.cardHeading}>
+                What happens when you deactivate:
+              </Text>
+
+              <View style={styles.factRow}>
+                <View style={styles.checkIconWrap}>
+                  <Ionicons name="checkmark" size={14} color="#15803D" />
+                </View>
+                <Text style={styles.factText}>
+                  Your profile will be hidden from searches and match listings immediately.
+                </Text>
+              </View>
+
+              <View style={styles.factRow}>
+                <View style={styles.checkIconWrap}>
+                  <Ionicons name="checkmark" size={14} color="#15803D" />
+                </View>
+                <Text style={styles.factText}>
+                  Members will not be able to send you new interests or view your contact.
+                </Text>
+              </View>
+
+              <View style={styles.factRow}>
+                <View style={styles.checkIconWrap}>
+                  <Ionicons name="checkmark" size={14} color="#15803D" />
+                </View>
+                <Text style={styles.factText}>
+                  Your uploaded photos, shortlist, and profile details remain 100% saved.
+                </Text>
+              </View>
+
+              <View style={styles.factRow}>
+                <View style={styles.checkIconWrap}>
+                  <Ionicons name="checkmark" size={14} color="#15803D" />
+                </View>
+                <Text style={styles.factText}>
+                  You can reactivate and restore your profile anytime by simply activating your account.
+                </Text>
+              </View>
+            </View>
+
+            {/* Reasons */}
+            <View style={styles.card}>
+              <Text style={styles.cardHeading}>Please tell us why you are leaving:</Text>
+              {DEACTIVATE_REASONS.map((reason) => {
+                const isSelected = selectedReason === reason;
+                return (
+                  <TouchableOpacity
+                    key={reason}
+                    style={[
+                      styles.reasonRow,
+                      isSelected && styles.reasonRowSelected,
+                    ]}
+                    onPress={() => setSelectedReason(reason)}
+                    activeOpacity={0.7}
+                  >
+                    <View
+                      style={[
+                        styles.radioCircle,
+                        isSelected && styles.radioCircleSelected,
+                      ]}
+                    >
+                      {isSelected && <View style={styles.radioDot} />}
+                    </View>
+                    <Text
+                      style={[
+                        styles.reasonText,
+                        isSelected && styles.reasonTextSelected,
+                      ]}
+                    >
+                      {reason}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            {/* Confirmation Checkbox */}
+            <TouchableOpacity
+              style={styles.confirmBox}
+              onPress={() => setConfirmed((prev) => !prev)}
+              activeOpacity={0.7}
+            >
+              <View style={[styles.checkbox, confirmed && styles.checkboxActive]}>
+                {confirmed && <Ionicons name="checkmark" size={16} color="#FFFFFF" />}
+              </View>
+              <Text style={styles.confirmText}>
+                I understand that my profile will be hidden from everyone until I reactivate it.
+              </Text>
+            </TouchableOpacity>
+
+            {/* Deactivate Button */}
+            <TouchableOpacity
+              style={[
+                styles.deactivateBtn,
+                (!confirmed || loading) && { opacity: 0.6 },
+              ]}
+              onPress={handleDeactivate}
+              disabled={!confirmed || loading}
+              activeOpacity={0.85}
+            >
+              {loading ? (
+                <ActivityIndicator color="#FFFFFF" size="small" />
+              ) : (
+                <>
+                  <Ionicons
+                    name="pause-circle-outline"
+                    size={18}
+                    color="#FFFFFF"
+                    style={{ marginRight: 6 }}
+                  />
+                  <Text style={styles.deactivateBtnText}>Deactivate My Account</Text>
+                </>
+              )}
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.cancelBtn}
+              onPress={() => navigation.goBack()}
+              disabled={loading}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.cancelBtnText}>Keep My Account Active</Text>
+            </TouchableOpacity>
+          </>
+        )}
       </KeyboardAwareScrollView>
     </SafeAreaView>
   );

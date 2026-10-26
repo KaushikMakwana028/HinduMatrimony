@@ -412,9 +412,7 @@ export default function GalleryScreen({ navigation }) {
   };
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={["top", "left", "right"]}>
-      <StatusBar barStyle="dark-content" />
-
+    <SafeAreaView style={styles.safeArea} edges={["left", "right"]}>
       {/* ---------- HEADER ---------- */}
       <ScreenHeader
         title="Photo Gallery"

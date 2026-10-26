@@ -96,6 +96,68 @@ const authService = {
             return { result: true, message: 'Logged out locally' };
         }
     },
+
+    /**
+     * Request forgot password verification code
+     * POST /forgot/password
+     * @param {Object} payload
+     * @param {'email'|'phone'} [payload.send_code_by]
+     * @param {string} payload.email_or_phone
+     */
+    async forgotPassword(payload) {
+        const emailOrPhone = String(payload.email_or_phone || '').trim().toLowerCase();
+        const sendCodeBy = payload.send_code_by || (emailOrPhone.includes('@') ? 'email' : 'phone');
+
+        const body = {
+            send_code_by: sendCodeBy,
+            email_or_phone: emailOrPhone,
+            email: emailOrPhone,
+            phone: emailOrPhone,
+        };
+
+        const response = await apiClient.post(ENDPOINTS.FORGOT_PASSWORD, body);
+
+        if (response && response.result === false) {
+            throw new ApiError(response.message || 'Failed to send verification code', 400, response);
+        }
+
+        return response;
+    },
+
+    /**
+     * Reset password using verification code
+     * POST /reset/password
+     * @param {Object} payload
+     * @param {'email'|'phone'} [payload.send_code_by]
+     * @param {string} payload.email_or_phone
+     * @param {string} payload.code
+     * @param {string} payload.password
+     * @param {string} payload.password_confirmation
+     */
+    async resetPassword(payload) {
+        const emailOrPhone = String(payload.email_or_phone || '').trim().toLowerCase();
+        const sendCodeBy = payload.send_code_by || (emailOrPhone.includes('@') ? 'email' : 'phone');
+        const cleanCode = String(payload.code || payload.verification_code || '').replace(/\s+/g, '').trim();
+
+        const body = {
+            send_code_by: sendCodeBy,
+            email_or_phone: emailOrPhone,
+            email: emailOrPhone,
+            phone: emailOrPhone,
+            code: cleanCode,
+            verification_code: cleanCode,
+            password: payload.password,
+            password_confirmation: payload.password_confirmation || payload.password,
+        };
+
+        const response = await apiClient.post(ENDPOINTS.RESET_PASSWORD, body);
+
+        if (response && response.result === false) {
+            throw new ApiError(response.message || 'Verification code does not match.', 400, response);
+        }
+
+        return response;
+    },
 };
 
 export { authService };

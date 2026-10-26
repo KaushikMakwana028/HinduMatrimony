@@ -1,14 +1,13 @@
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import {
-    View,
-    Text,
-    StyleSheet,
-    TouchableOpacity,
-    Alert,
-    Image,
-    ActivityIndicator,
-    RefreshControl,
-    ScrollView,
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  Alert,
+  Image,
+  ActivityIndicator,
+  RefreshControl,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useFocusEffect } from "@react-navigation/native";
@@ -21,2092 +20,2275 @@ import profileService from "../services/profileService";
 import memberService from "../services/memberService";
 import galleryService from "../services/galleryService";
 import happyStoryService from "../services/happyStoryService";
-import { subscribeMemberAction, emitMemberAction } from "../services/memberEvents";
-import { COLORS, FONTS, DEFAULT_AVATAR } from "../theme";
+import memberStateService from "../services/memberStateService";
+import {
+  subscribeMemberAction,
+  emitMemberAction,
+} from "../services/memberEvents";
+import { COLORS, FONTS, DEFAULT_AVATAR, DEFAULT_FEMALE_AVATAR } from "../theme";
 
 const ON_BEHALF_MAP = {
-    "1": "Self",
-    "2": "Daughter",
-    "3": "Son",
-    "4": "Sister",
-    "5": "Brother",
-    "6": "Relative",
-    "7": "Friend",
+  1: "Self",
+  2: "Daughter",
+  3: "Son",
+  4: "Sister",
+  5: "Brother",
+  6: "Relative",
+  7: "Friend",
 };
 
+// Set to true to bring back the "Profile details" tab (About me, Personal info, etc.)
+const SHOW_PROFILE_DETAILS = false;
+
+const PREMIUM_COLOR = "#6D28D9";
+const PREMIUM_SOFT = "#F3E8FF";
+const GOLD = "#F5C451";
+
 function calculateAge(dob) {
-    if (!dob) return "";
-    let birthDate;
-    if (String(dob).includes("/")) {
-        const parts = String(dob).split("/");
-        if (parts.length === 3) birthDate = new Date(`${parts[2]}-${parts[1]}-${parts[0]}`);
-    } else {
-        birthDate = new Date(dob);
-    }
-    if (!birthDate || isNaN(birthDate.getTime())) return "";
-    const diff = Date.now() - birthDate.getTime();
-    const ageDate = new Date(diff);
-    const age = Math.abs(ageDate.getUTCFullYear() - 1970);
-    return age > 0 && age < 120 ? String(age) : "";
+  if (!dob) return "";
+  let birthDate;
+  if (String(dob).includes("/")) {
+    const parts = String(dob).split("/");
+    if (parts.length === 3)
+      birthDate = new Date(`${parts[2]}-${parts[1]}-${parts[0]}`);
+  } else {
+    birthDate = new Date(dob);
+  }
+  if (!birthDate || isNaN(birthDate.getTime())) return "";
+  const diff = Date.now() - birthDate.getTime();
+  const ageDate = new Date(diff);
+  const age = Math.abs(ageDate.getUTCFullYear() - 1970);
+  return age > 0 && age < 120 ? String(age) : "";
 }
 
-const ACCOUNT_ITEMS = [
-    { label: "Edit / Manage Profile", icon: "📝", route: "EditProfile" },
-    { label: "Gallery", icon: "🖼️", route: "Gallery" },
-    { label: "Happy Story", icon: "💍", route: "HappyStory" },
-    { label: "Packages", icon: "💎", route: "Packages" },
-    { label: "Ignored User List", icon: "🚫", route: "IgnoredUsers" },
-    { label: "Profile Viewer", icon: "👁️", route: "ProfileViewer" },
-];
+function toList(value) {
+  if (!value) return [];
+  return String(value)
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
 
-const SECURITY_ITEMS = [
-    { label: "Change Password", icon: "🔑", route: "ChangePassword" },
-];
+/* ------------------------------------------------------------------ */
+/* Small building blocks                                               */
+/* ------------------------------------------------------------------ */
 
-const DANGER_ITEMS = [
-    { label: "Deactivate Account", icon: "⏸️", route: "DeactivateAccount" },
-    { label: "Delete Account", icon: "🗑️", route: "DeleteAccount", destructive: true },
-];
-
-function MenuRow({ item, isLast, onPress }) {
-    const destructive = item.destructive;
-    return (
-        <TouchableOpacity
-            style={[styles.item, !isLast && styles.itemBorder]}
-            onPress={onPress}
-            activeOpacity={0.6}
+// List of label/value rows. Empty values are skipped, last row has no divider.
+function InfoList({ rows }) {
+  const visible = rows.filter((r) => r && r.value);
+  if (visible.length === 0) return null;
+  return (
+    <View>
+      {visible.map((row, i) => (
+        <View
+          key={row.label}
+          style={[
+            styles.infoRow,
+            i === visible.length - 1 && styles.infoRowLast,
+          ]}
         >
-            <View style={[styles.itemIconWrap, destructive && { backgroundColor: COLORS.dangerSoft }]}>
-                <Text style={styles.itemIcon}>{item.icon}</Text>
-            </View>
-            <Text style={[styles.itemLabel, destructive && { color: COLORS.danger }]}>{item.label}</Text>
-            <Text style={[styles.itemChevron, destructive && { color: COLORS.danger }]}>›</Text>
-        </TouchableOpacity>
-    );
+          <Text style={styles.infoLabel}>{row.label}</Text>
+          <Text style={styles.infoValue} numberOfLines={2}>
+            {row.value}
+          </Text>
+        </View>
+      ))}
+    </View>
+  );
 }
 
-function Section({ title, children }) {
-    return (
-        <View style={styles.sectionWrap}>
-            <Text style={styles.sectionTitle}>{title}</Text>
-            <View style={styles.listCard}>{children}</View>
-        </View>
-    );
+function ChipGroup({ label, items }) {
+  if (!items || items.length === 0) return null;
+  return (
+    <View style={styles.chipBlock}>
+      <Text style={styles.chipBlockLabel}>{label}</Text>
+      <View style={styles.chipWrap}>
+        {items.map((item) => (
+          <View key={item} style={styles.chip}>
+            <Text style={styles.chipText}>{item}</Text>
+          </View>
+        ))}
+      </View>
+    </View>
+  );
 }
+
+function EmptyPrompt({ text, onPress }) {
+  return (
+    <TouchableOpacity
+      style={styles.emptyPrompt}
+      onPress={onPress}
+      activeOpacity={0.75}
+    >
+      <View style={styles.emptyPromptIcon}>
+        <Ionicons name="add" size={16} color={COLORS.primary} />
+      </View>
+      <Text style={styles.emptyPromptText}>{text}</Text>
+    </TouchableOpacity>
+  );
+}
+
+function ProfileCardSection({ title, icon, sectionKey, navigation, children }) {
+  return (
+    <View style={styles.sectionCard}>
+      <View style={styles.sectionHeader}>
+        <View style={styles.sectionIconBadge}>
+          <Ionicons name={icon} size={16} color={COLORS.primary} />
+        </View>
+        <Text style={styles.sectionTitle}>{title}</Text>
+        <TouchableOpacity
+          style={styles.sectionEditBtn}
+          onPress={() =>
+            navigation?.navigate("EditProfile", { section: sectionKey })
+          }
+          activeOpacity={0.7}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          <Ionicons name="pencil" size={12} color={COLORS.primary} />
+          <Text style={styles.sectionEditText}>Edit</Text>
+        </TouchableOpacity>
+      </View>
+      {children}
+    </View>
+  );
+}
+
+function QuickAction({ icon, tint, bg, title, sub, badge, onPress }) {
+  return (
+    <TouchableOpacity
+      style={styles.quickItem}
+      onPress={onPress}
+      activeOpacity={0.75}
+    >
+      <View style={[styles.quickIcon, { backgroundColor: bg }]}>
+        <Ionicons name={icon} size={22} color={tint} />
+        {badge ? (
+          <View style={styles.quickBadge}>
+            <Text style={styles.quickBadgeText}>{badge}</Text>
+          </View>
+        ) : null}
+      </View>
+      <Text style={styles.quickTitle} numberOfLines={1}>
+        {title}
+      </Text>
+      <Text style={styles.quickSub} numberOfLines={1}>
+        {sub}
+      </Text>
+    </TouchableOpacity>
+  );
+}
+
+function MenuGroup({ title, danger, children }) {
+  return (
+    <View style={styles.menuGroup}>
+      <Text style={[styles.menuGroupTitle, danger && { color: COLORS.danger }]}>
+        {title}
+      </Text>
+      <View style={styles.menuGroupCard}>{children}</View>
+    </View>
+  );
+}
+
+function MenuRow({ icon, tint, bg, label, onPress, last, danger }) {
+  return (
+    <TouchableOpacity
+      style={[styles.menuRow, last && styles.menuRowLast]}
+      onPress={onPress}
+      activeOpacity={0.7}
+    >
+      <View style={[styles.menuIconWrap, { backgroundColor: bg }]}>
+        <Ionicons name={icon} size={17} color={tint} />
+      </View>
+      <Text style={[styles.menuRowLabel, danger && { color: COLORS.danger }]}>
+        {label}
+      </Text>
+      <Ionicons
+        name="chevron-forward"
+        size={16}
+        color={danger ? COLORS.danger : COLORS.textLight}
+      />
+    </TouchableOpacity>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Screen                                                              */
+/* ------------------------------------------------------------------ */
 
 export default function ProfileScreen({ navigation }) {
-    const { user, token, logout, updateUser } = useAuth();
-    const [profileData, setProfileData] = useState(null);
-    const [galleryImages, setGalleryImages] = useState([]);
-    const [happyStoryData, setHappyStoryData] = useState({ hasStory: false, story: null });
-    const [emailUnverified, setEmailUnverified] = useState(false);
-    const [refreshing, setRefreshing] = useState(false);
-    const [loggingOut, setLoggingOut] = useState(false);
-    const [localAvatar, setLocalAvatar] = useState(null);
-    const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  const { user, token, logout, updateUser } = useAuth();
+  const [profileData, setProfileData] = useState(null);
+  const [galleryImages, setGalleryImages] = useState([]);
+  const [happyStoryData, setHappyStoryData] = useState({
+    hasStory: false,
+    story: null,
+  });
+  const [emailUnverified, setEmailUnverified] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
+  const [localAvatar, setLocalAvatar] = useState(null);
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  const [activeTab, setActiveTab] = useState("profile"); // "profile" | "settings"
 
-    const fetchGallery = useCallback(async () => {
-        if (!token) return;
-        try {
-            const list = await galleryService.getGalleryImages(token);
-            if (Array.isArray(list)) {
-                setGalleryImages(list);
-            }
-        } catch {
-            // Silently fallback if error
+  const fetchGallery = useCallback(async () => {
+    if (!token) return;
+    try {
+      const list = await galleryService.getGalleryImages(token);
+      if (Array.isArray(list)) {
+        setGalleryImages(list);
+      }
+    } catch {
+      // Silently fallback if error
+    }
+  }, [token]);
+
+  const fetchHappyStory = useCallback(async () => {
+    if (!token) return;
+    try {
+      const res = await happyStoryService.checkHappyStory(token);
+      setHappyStoryData({
+        hasStory: Boolean(res?.hasStory),
+        story: res?.story || null,
+      });
+    } catch {
+      // Silently fallback if error
+    }
+  }, [token]);
+
+  const fetchFullProfile = useCallback(
+    async (forceRefresh = false) => {
+      const userId = user?.id;
+      if (!userId || !token) return;
+      try {
+        const response = await profileService.getMyProfile(
+          userId,
+          token,
+          forceRefresh,
+        );
+        if (response && response.result !== false && response.data) {
+          setProfileData(response.data);
+          setEmailUnverified(false);
         }
-    }, [token]);
-
-    const fetchHappyStory = useCallback(async () => {
-        if (!token) return;
-        try {
-            const res = await happyStoryService.checkHappyStory(token);
-            setHappyStoryData({
-                hasStory: Boolean(res?.hasStory),
-                story: res?.story || null,
-            });
-        } catch {
-            // Silently fallback if error
+      } catch (err) {
+        if (/not verified/i.test(err?.message)) {
+          setEmailUnverified(true);
         }
-    }, [token]);
+      }
+    },
+    [user?.id, token],
+  );
 
-    // Refresh gallery and happy story whenever the screen comes into focus
-    useFocusEffect(
-        useCallback(() => {
-            fetchGallery();
-            fetchHappyStory();
-        }, [fetchGallery, fetchHappyStory])
-    );
+  // Refresh data whenever screen comes into focus (serves instant 0ms memory cache)
+  useFocusEffect(
+    useCallback(() => {
+      fetchFullProfile(false);
+      fetchGallery();
+      fetchHappyStory();
+    }, [fetchFullProfile, fetchGallery, fetchHappyStory]),
+  );
 
-    // Subscribe to cross-screen gallery, profile, and happy story updates
-    useEffect(() => {
-        const unsubscribe = subscribeMemberAction((event) => {
-            if (event?.type === "gallery_updated") {
-                fetchGallery();
-            }
-            if (event?.type === "happy_story_updated") {
-                fetchHappyStory();
-            }
-            if (event?.type === "profile_updated" || event?.type === "profile_photo_updated") {
-                if (event?.photo) {
-                    setLocalAvatar(event.photo);
-                }
-                if (user?.id && token) {
-                    profileService.getMyProfile(user.id, token).then((res) => {
-                        if (res?.data) setProfileData(res.data);
-                    }).catch(() => { });
-                }
-            }
-        });
-        return unsubscribe;
-    }, [fetchGallery, fetchHappyStory, user?.id, token]);
+  // Subscribe to cross-screen updates
+  useEffect(() => {
+    const unsubscribe = subscribeMemberAction((event) => {
+      if (event?.type === "gallery_updated") {
+        fetchGallery();
+      }
+      if (event?.type === "happy_story_updated") {
+        fetchHappyStory();
+      }
+      if (
+        event?.type === "profile_updated" ||
+        event?.type === "profile_photo_updated"
+      ) {
+        if (event?.photo) {
+          setLocalAvatar(event.photo);
+        }
+        fetchFullProfile(true);
+      }
+    });
+    return unsubscribe;
+  }, [fetchGallery, fetchHappyStory, fetchFullProfile]);
 
-    useEffect(() => {
-        let isMounted = true;
-        const userId = user?.id;
-        if (!userId || !token) return;
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await Promise.allSettled([
+        fetchFullProfile(true),
+        fetchGallery(),
+        fetchHappyStory(),
+      ]);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [fetchFullProfile, fetchGallery, fetchHappyStory]);
 
-        (async () => {
+  const handleLogout = () => {
+    Alert.alert(
+      "Sign out",
+      "Are you sure you want to sign out of HinduMatrimony?",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Sign out",
+          style: "destructive",
+          onPress: async () => {
+            setLoggingOut(true);
             try {
-                const response = await profileService.getMyProfile(userId, token);
-                if (isMounted && response && response.result !== false && response.data) {
-                    setProfileData(response.data);
-                    setEmailUnverified(false);
-                }
+              await logout();
+            } finally {
+              setLoggingOut(false);
+              navigation.replace("Login");
+            }
+          },
+        },
+      ],
+    );
+  };
+
+  // ---- Extract dynamic fields from profileData or fallback to user ----
+  const basicInfo = profileData?.basic_info;
+  const contactDetails = profileData?.contact_details;
+  const spiritual = profileData?.spiritual_background;
+  const presentAddress = profileData?.present_address;
+  const permanentAddress = profileData?.permanent_address;
+  const physical = profileData?.physical_attributes;
+  const educationArr = profileData?.education;
+  const careerArr = profileData?.career;
+  const lifestyle = profileData?.lifestyles || profileData?.lifestyle;
+  const astronomic = profileData?.astrologies || profileData?.astronomic;
+  const family = profileData?.families_information || profileData?.family_info;
+  const hobbies = profileData?.hobbies_interest || profileData?.hobbies;
+  const partnerExpectation = profileData?.partner_expectation;
+  const knownLanguages = profileData?.known_languages || "";
+
+  const userSplit = (user?.name || "").trim().split(" ");
+  const firstName =
+    basicInfo?.first_name ||
+    basicInfo?.firs_name ||
+    profileData?.first_name ||
+    user?.first_name ||
+    userSplit[0] ||
+    "";
+  const lastName =
+    basicInfo?.last_name ||
+    profileData?.last_name ||
+    user?.last_name ||
+    userSplit.slice(1).join(" ") ||
+    "";
+  const fullName =
+    firstName || lastName
+      ? `${firstName} ${lastName}`.trim()
+      : user?.name || "Member profile";
+
+  const memberCode =
+    basicInfo?.code ||
+    profileData?.code ||
+    user?.code ||
+    user?.member_code ||
+    (user?.id ? `HM-${user.id}` : "");
+
+  const memberDob =
+    basicInfo?.date_of_birth ||
+    basicInfo?.birthday ||
+    basicInfo?.birth_date ||
+    profileData?.date_of_birth ||
+    user?.date_of_birth ||
+    user?.dob ||
+    user?.birthday ||
+    "";
+
+  const memberAge = basicInfo?.age
+    ? String(basicInfo.age)
+    : user?.age
+      ? String(user.age)
+      : calculateAge(memberDob);
+
+  const memberGenderRaw =
+    basicInfo?.gender || profileData?.gender || user?.gender || "";
+  const memberGender = memberGenderRaw
+    ? memberGenderRaw.charAt(0).toUpperCase() +
+      memberGenderRaw.slice(1).toLowerCase()
+    : "";
+
+  const maritalStatus =
+    basicInfo?.maritial_status ||
+    basicInfo?.marital_status ||
+    profileData?.maritial_status ||
+    profileData?.marital_status ||
+    user?.marital_status ||
+    user?.maritial_status ||
+    "";
+
+  const onBehalfKey = String(
+    basicInfo?.on_behalf || profileData?.on_behalf || user?.on_behalf || "",
+  );
+  const onBehalfName =
+    basicInfo?.onbehalf?.name ||
+    basicInfo?.on_behalf?.name ||
+    profileData?.onbehalf?.name ||
+    ON_BEHALF_MAP[onBehalfKey] ||
+    (user?.on_behalf && isNaN(user.on_behalf) ? user.on_behalf : "Self");
+
+  const motherTongue =
+    basicInfo?.mothere_tongue ||
+    basicInfo?.mother_tongue ||
+    profileData?.mother_tongue ||
+    user?.mothere_tongue ||
+    user?.mother_tongue ||
+    "";
+
+  const defaultAvatarForGender =
+    memberGender.toLowerCase() === "female"
+      ? DEFAULT_FEMALE_AVATAR
+      : DEFAULT_AVATAR;
+
+  const userPhoto =
+    localAvatar ||
+    basicInfo?.photo ||
+    profileData?.photo ||
+    user?.avatar_original ||
+    user?.avatar ||
+    defaultAvatarForGender;
+
+  const userPhone =
+    contactDetails?.phone ||
+    basicInfo?.phone ||
+    profileData?.phone ||
+    user?.phone ||
+    "";
+
+  const userEmail =
+    contactDetails?.email ||
+    basicInfo?.email ||
+    profileData?.email ||
+    user?.email ||
+    "";
+
+  const isPremium = useMemo(() => {
+    // 1. Explicit package name checks
+    const names = [
+      user?.package_name,
+      profileData?.package_name,
+      profileData?.current_package_info?.package_name,
+      user?.current_package,
+    ];
+    for (const n of names) {
+      if (!n) continue;
+      const s = String(n).toLowerCase();
+      if (s.includes("free")) return false;
+      if (
+        s.includes("premium") ||
+        s.includes("silver") ||
+        s.includes("gold") ||
+        s.includes("diamond") ||
+        s.includes("platinum") ||
+        s.includes("vip")
+      ) {
+        return true;
+      }
+    }
+
+    // 2. Package ID check (1 is Free Package)
+    const pkgId = Number(
+      profileData?.package_id ||
+        user?.package_id ||
+        profileData?.current_package_info?.package_id ||
+        user?.current_package_id
+    );
+    if (pkgId === 1) return false;
+    if (pkgId > 1) return true;
+
+    // 3. Active Matrimonial CMS membership values: 1 = Free, >= 2 = Premium
+    const mem = Number(profileData?.membership ?? user?.membership);
+    if (mem === 1) return false;
+    if (mem >= 2) return true;
+
+    if (user?.is_premium || profileData?.is_premium) return true;
+
+    return memberStateService.resolvePlan(profileData || user) === "Premium";
+  }, [user, profileData]);
+
+  const planName = isPremium ? "Premium member" : "Free member";
+
+  const isAccountDeactivated = Boolean(
+    user?.deactivated === 1 ||
+      user?.deactivated === "1" ||
+      user?.deactivation_status === 1 ||
+      user?.deactivation_status === "1" ||
+      profileData?.deactivated === 1 ||
+      profileData?.deactivated === "1" ||
+      profileData?.deactivation_status === 1 ||
+      profileData?.deactivation_status === "1"
+  );
+
+  const introductionBio =
+    profileData?.introduction || profileData?.intoduction?.introduction || "";
+  const religionName =
+    spiritual?.religion?.name ||
+    (typeof spiritual?.religion === "string" ? spiritual.religion : "") ||
+    spiritual?.religion_name ||
+    basicInfo?.religion_name ||
+    user?.religion_name ||
+    user?.religion ||
+    (spiritual?.member_religion_id || spiritual?.religion_id ? "Hindu" : "") ||
+    "";
+  const casteName =
+    spiritual?.caste?.name ||
+    (typeof spiritual?.caste === "string" ? spiritual.caste : "") ||
+    spiritual?.caste_name ||
+    basicInfo?.caste_name ||
+    user?.caste_name ||
+    user?.caste ||
+    "";
+  const subCasteName =
+    spiritual?.sub_caste?.name ||
+    (typeof spiritual?.sub_caste === "string" ? spiritual.sub_caste : "") ||
+    spiritual?.sub_caste_name ||
+    "";
+
+  const city =
+    presentAddress?.city?.name || presentAddress?.city || user?.city || "";
+  const state =
+    presentAddress?.state?.name || presentAddress?.state || user?.state || "";
+  const country =
+    presentAddress?.country?.name ||
+    presentAddress?.country ||
+    user?.country ||
+    "";
+  const locationStr =
+    [city, state, country].filter(Boolean).join(", ") || user?.location || "";
+
+  const permCity = permanentAddress?.city?.name || permanentAddress?.city || "";
+  const permState =
+    permanentAddress?.state?.name || permanentAddress?.state || "";
+  const permCountry =
+    permanentAddress?.country?.name || permanentAddress?.country || "";
+  const permLocationStr = [permCity, permState, permCountry]
+    .filter(Boolean)
+    .join(", ");
+
+  const heightStr = physical?.height || user?.height || "";
+  const weightStr = physical?.weight || user?.weight || "";
+  const educationStr =
+    Array.isArray(educationArr) && educationArr[0]?.degree
+      ? educationArr[0].degree
+      : (typeof educationArr === "string" ? educationArr : "") ||
+        user?.education ||
+        "";
+  const careerStr =
+    Array.isArray(careerArr) && careerArr[0]?.designation
+      ? careerArr[0].designation
+      : (typeof careerArr === "string" ? careerArr : "") ||
+        user?.profession ||
+        user?.career ||
+        "";
+
+  const hasCustomPhoto = Boolean(
+    userPhoto &&
+    typeof userPhoto === "string" &&
+    !userPhoto.includes("avatar-place"),
+  );
+
+  // ---- Profile completeness: score + what's still missing ----
+  const { profileCompleteness, missingItems } = useMemo(() => {
+    const checklist = [
+      {
+        key: "photo",
+        section: "photo",
+        icon: "camera-outline",
+        label: "Add profile photo",
+        sub: "Upload your main profile photo",
+        points: 15,
+        done: hasCustomPhoto,
+      },
+      {
+        key: "basic",
+        section: "basic",
+        icon: "person-outline",
+        label: "Basic info",
+        sub: "Name, date of birth, marital status",
+        points: 15,
+        done: Boolean(
+          (firstName || user?.name) && (memberDob || memberAge) && maritalStatus,
+        ),
+      },
+      {
+        key: "address",
+        section: "address",
+        icon: "location-outline",
+        label: "Location & address",
+        sub: "City, state and country details",
+        points: 15,
+        done: Boolean(city || state || locationStr || permCity || permLocationStr),
+      },
+      {
+        key: "spiritual",
+        section: "spiritual",
+        icon: "flower-outline",
+        label: "Spiritual background",
+        sub: "Religion and caste details",
+        points: 15,
+        done: Boolean(
+          spiritual?.member_religion_id ||
+            spiritual?.religion_id ||
+            spiritual?.member_caste_id ||
+            spiritual?.caste_id ||
+            spiritual?.member_sub_caste_id ||
+            spiritual?.ethnicity ||
+            spiritual?.personal_value ||
+            religionName ||
+            casteName ||
+            user?.religion ||
+            user?.caste ||
+            basicInfo?.religion ||
+            basicInfo?.caste,
+        ),
+      },
+      {
+        key: "physical",
+        section: "physical",
+        icon: "body-outline",
+        label: "Physical attributes",
+        sub: "Height, weight & body details",
+        points: 10,
+        done: Boolean(
+          heightStr || physical?.height || physical?.weight || weightStr,
+        ),
+      },
+      {
+        key: "intro",
+        section: "introduction",
+        icon: "document-text-outline",
+        label: "About me / introduction",
+        sub: "Brief summary describing yourself",
+        points: 10,
+        done: Boolean(
+          introductionBio && String(introductionBio).trim().length >= 10,
+        ),
+      },
+      {
+        key: "partner",
+        section: "partner",
+        icon: "heart-outline",
+        label: "Partner expectations",
+        sub: "Preferences for your ideal match",
+        points: 10,
+        done: Boolean(
+          partnerExpectation?.general ||
+            partnerExpectation?.residence_country_id ||
+            partnerExpectation?.partner_religion_id ||
+            partnerExpectation?.partner_caste_id ||
+            partnerExpectation?.partner_country_id ||
+            partnerExpectation?.pertner_education ||
+            partnerExpectation?.partner_profession ||
+            partnerExpectation?.partner_marital_status,
+        ),
+      },
+      {
+        key: "family",
+        section: "family",
+        icon: "people-outline",
+        label: "Family details",
+        sub: "Parents, family background & values",
+        points: 10,
+        done: Boolean(
+          family?.father_name ||
+            family?.father ||
+            family?.mother_name ||
+            family?.mother ||
+            family?.family_value_id ||
+            family?.family_value ||
+            family?.family_status,
+        ),
+      },
+    ];
+
+    const score = checklist.reduce((sum, c) => sum + (c.done ? c.points : 0), 0);
+    return {
+      profileCompleteness: Math.min(100, Math.max(0, Math.round(score))),
+      missingItems: checklist.filter((c) => !c.done),
+    };
+  }, [
+    hasCustomPhoto,
+    firstName,
+    user?.name,
+    memberDob,
+    memberAge,
+    maritalStatus,
+    religionName,
+    casteName,
+    spiritual,
+    basicInfo?.religion,
+    basicInfo?.caste,
+    user?.religion,
+    user?.caste,
+    city,
+    state,
+    locationStr,
+    permCity,
+    permLocationStr,
+    heightStr,
+    physical,
+    weightStr,
+    introductionBio,
+    partnerExpectation,
+    family,
+  ]);
+
+  const handleUploadAvatar = async (asset) => {
+    if (!token) return;
+    setUploadingAvatar(true);
+    try {
+      setLocalAvatar(asset.uri);
+      if (updateUser) {
+        updateUser({ avatar: asset.uri, avatar_original: asset.uri });
+      }
+
+      const response = await memberService.uploadProfilePhoto(
+        asset,
+        {
+          first_name: firstName,
+          last_name: lastName,
+          email: userEmail,
+          phone: userPhone,
+          gender: memberGender.toLowerCase() || "male",
+          date_of_birth: memberDob,
+          on_behalf: onBehalfKey || "1",
+          marital_status: maritalStatus || "Never Married",
+        },
+        token,
+      );
+
+      const serverUrl = response?.data?.photo || response?.photo || asset.uri;
+      setLocalAvatar(serverUrl);
+      profileService.clearSettingsCache();
+      if (updateUser) {
+        updateUser({ avatar: serverUrl, avatar_original: serverUrl });
+      }
+      emitMemberAction({ type: "profile_updated", photo: serverUrl });
+      Alert.alert("Photo updated", "Your profile photo has been updated.");
+    } catch (err) {
+      console.log("Profile photo upload notice:", err?.message);
+      Alert.alert(
+        "Upload notice",
+        err?.message || "Profile photo updated locally.",
+      );
+    } finally {
+      setUploadingAvatar(false);
+    }
+  };
+
+  const promptProfilePhoto = () => {
+    Alert.alert(
+      "Update profile photo",
+      "Choose how you'd like to add your main profile picture.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Take photo",
+          onPress: async () => {
+            try {
+              const { status } =
+                await ImagePicker.requestCameraPermissionsAsync();
+              if (status !== "granted") {
+                Alert.alert(
+                  "Permission required",
+                  "Camera access is needed to take a profile picture.",
+                );
+                return;
+              }
+              const res = await ImagePicker.launchCameraAsync({
+                mediaTypes: ["images"],
+                allowsEditing: true,
+                aspect: [1, 1],
+                quality: 0.85,
+              });
+              if (!res.canceled && res.assets && res.assets.length > 0) {
+                handleUploadAvatar(res.assets[0]);
+              }
             } catch (err) {
-                if (/not verified/i.test(err?.message)) {
-                    if (isMounted) setEmailUnverified(true);
-                    console.log("Profile: Account email pending verification.");
-                } else {
-                    console.log("Could not fetch profile data:", err.message);
-                }
+              Alert.alert("Error", err?.message || "Could not launch camera.");
             }
-        })();
-
-        return () => {
-            isMounted = false;
-        };
-    }, [user?.id, token]);
-
-    const onRefresh = useCallback(async () => {
-        const userId = user?.id;
-        if (!token) return;
-
-        setRefreshing(true);
-        try {
-            if (userId) {
-                const response = await profileService.getMyProfile(userId, token);
-                if (response && response.result !== false && response.data) {
-                    setProfileData(response.data);
-                    setEmailUnverified(false);
-                }
-            }
-            const galList = await galleryService.getGalleryImages(token);
-            if (Array.isArray(galList)) {
-                setGalleryImages(galList);
-            }
-            const storyRes = await happyStoryService.checkHappyStory(token);
-            setHappyStoryData({
-                hasStory: Boolean(storyRes?.hasStory),
-                story: storyRes?.story || null,
-            });
-        } catch (err) {
-            if (/not verified/i.test(err?.message)) {
-                setEmailUnverified(true);
-                console.log("Profile: Account email pending verification.");
-            } else {
-                console.log("Could not refresh profile data:", err.message);
-            }
-        } finally {
-            setRefreshing(false);
-        }
-    }, [user?.id, token]);
-
-    const handleNavigate = (route) => {
-        if (route === "ManageProfile" || route === "EditProfile") {
-            return navigation.navigate("EditProfile");
-        }
-        if (route === "DeleteAccount") {
-            return navigation.navigate("DeleteAccount");
-        }
-        if (route === "DeactivateAccount") {
-            return navigation.navigate("DeactivateAccount");
-        }
-        if (route === "ChangePassword") {
-            return navigation.navigate("ChangePassword");
-        }
-        if (route === "Gallery") {
-            return navigation.navigate("Gallery");
-        }
-        if (route === "HappyStory") {
-            return navigation.navigate("HappyStory");
-        }
-        if (route === "Packages") {
-            return navigation.navigate("Packages");
-        }
-        if (route === "IgnoredUsers" || route === "IgnoredUserList") {
-            return navigation.navigate("IgnoredUsers");
-        }
-        if (route === "MyInterest" || route === "Interests") {
-            return navigation.navigate("MyInterest");
-        }
-        if (route === "ProfileViewer") {
-            return navigation.navigate("ProfileViewer");
-        }
-        if (navigation?.navigate) {
+          },
+        },
+        {
+          text: "Choose from library",
+          onPress: async () => {
             try {
-                navigation.navigate(route);
-            } catch {
-                Alert.alert("Coming soon", `${route} screen is not available yet.`);
+              const { status } =
+                await ImagePicker.requestMediaLibraryPermissionsAsync();
+              if (status !== "granted") {
+                Alert.alert(
+                  "Permission required",
+                  "Photo library access is needed to choose a profile picture.",
+                );
+                return;
+              }
+              const res = await ImagePicker.launchImageLibraryAsync({
+                mediaTypes: ["images"],
+                allowsEditing: true,
+                aspect: [1, 1],
+                quality: 0.85,
+              });
+              if (!res.canceled && res.assets && res.assets.length > 0) {
+                handleUploadAvatar(res.assets[0]);
+              }
+            } catch (err) {
+              Alert.alert(
+                "Error",
+                err?.message || "Could not open photo library.",
+              );
             }
-        }
-    };
-
-
-    const handleLogout = () => {
-        Alert.alert(
-            "Sign Out",
-            "Are you sure you want to sign out?",
-            [
-                { text: "Cancel", style: "cancel" },
-                {
-                    text: "Sign Out",
-                    style: "destructive",
-                    onPress: async () => {
-                        setLoggingOut(true);
-                        try {
-                            await logout();
-                        } finally {
-                            setLoggingOut(false);
-                            navigation.replace("Login");
-                        }
-                    },
-                },
-            ]
-        );
-    };
-
-    const onMenuPress = (item) => {
-        if (item.route === "DeleteAccount") {
-            return navigation.navigate("DeleteAccount");
-        }
-        return handleNavigate(item.route);
-    };
-
-    // Extract dynamic fields from profileData or fallback to user
-    const basicInfo = profileData?.basic_info;
-    const contactDetails = profileData?.contact_details;
-    const spiritual = profileData?.spiritual_background;
-    const presentAddress = profileData?.present_address;
-    const physical = profileData?.physical_attributes;
-    const educationArr = profileData?.education;
-    const careerArr = profileData?.career;
-
-    const firstName = basicInfo?.first_name || basicInfo?.firs_name || user?.first_name || "";
-    const lastName = basicInfo?.last_name || user?.last_name || "";
-    const fullName = (firstName || lastName)
-        ? `${firstName} ${lastName}`.trim()
-        : user?.name || "Member Profile";
-
-    const memberCode = basicInfo?.code || user?.code || user?.member_code || (user?.id ? `HM-${user.id}` : "");
-    const memberDob = basicInfo?.date_of_birth || user?.date_of_birth || user?.dob || "";
-    const memberAge = basicInfo?.age ? String(basicInfo.age) : (user?.age ? String(user.age) : calculateAge(memberDob));
-    const memberGenderRaw = basicInfo?.gender || user?.gender || "";
-    const memberGender = memberGenderRaw ? (memberGenderRaw.charAt(0).toUpperCase() + memberGenderRaw.slice(1).toLowerCase()) : "";
-    const maritalStatus = basicInfo?.maritial_status || basicInfo?.marital_status || user?.marital_status || user?.maritial_status || "";
-    const onBehalfKey = String(basicInfo?.on_behalf || user?.on_behalf || "");
-    const onBehalfName = basicInfo?.onbehalf?.name || ON_BEHALF_MAP[onBehalfKey] || (user?.on_behalf && isNaN(user.on_behalf) ? user.on_behalf : null);
-    const motherTongue = basicInfo?.mothere_tongue || basicInfo?.mother_tongue || user?.mothere_tongue || user?.mother_tongue || "";
-
-    const userPhoto = localAvatar || basicInfo?.photo || user?.avatar_original || user?.avatar || DEFAULT_AVATAR;
-    const userPhone = contactDetails?.phone || user?.phone || "";
-    const userEmail = contactDetails?.email || user?.email || "";
-    const planName = user?.membership ? "Premium Member" : "Free Plan";
-
-    const promptProfilePhoto = () => {
-        Alert.alert(
-            "Update Profile Photo 📷",
-            "Choose an option to update your main profile picture:",
-            [
-                { text: "Cancel", style: "cancel" },
-                {
-                    text: "Take Photo (Camera)",
-                    onPress: async () => {
-                        try {
-                            const { status } = await ImagePicker.requestCameraPermissionsAsync();
-                            if (status !== "granted") {
-                                Alert.alert("Permission Required", "Camera access is needed to take a profile picture.");
-                                return;
-                            }
-                            const res = await ImagePicker.launchCameraAsync({
-                                mediaTypes: ["images"],
-                                allowsEditing: true,
-                                aspect: [1, 1],
-                                quality: 0.85,
-                            });
-                            if (!res.canceled && res.assets && res.assets.length > 0) {
-                                handleUploadAvatar(res.assets[0]);
-                            }
-                        } catch (err) {
-                            Alert.alert("Error", err?.message || "Could not launch camera.");
-                        }
-                    },
-                },
-                {
-                    text: "Choose from Library",
-                    onPress: async () => {
-                        try {
-                            const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-                            if (status !== "granted") {
-                                Alert.alert("Permission Required", "Photo library access is needed to choose a profile picture.");
-                                return;
-                            }
-                            const res = await ImagePicker.launchImageLibraryAsync({
-                                mediaTypes: ["images"],
-                                allowsEditing: true,
-                                aspect: [1, 1],
-                                quality: 0.85,
-                            });
-                            if (!res.canceled && res.assets && res.assets.length > 0) {
-                                handleUploadAvatar(res.assets[0]);
-                            }
-                        } catch (err) {
-                            Alert.alert("Error", err?.message || "Could not open photo library.");
-                        }
-                    },
-                },
-            ]
-        );
-    };
-
-    const handleUploadAvatar = async (asset) => {
-        if (!token) return;
-        setUploadingAvatar(true);
-        try {
-            setLocalAvatar(asset.uri);
-            if (updateUser) {
-                updateUser({ avatar: asset.uri, avatar_original: asset.uri });
-            }
-
-            const response = await memberService.uploadProfilePhoto(
-                asset,
-                {
-                    first_name: basicInfo?.firs_name || basicInfo?.first_name || user?.name?.split(" ")[0],
-                    last_name: basicInfo?.last_name || user?.name?.split(" ").slice(1).join(" "),
-                    email: user?.email,
-                    phone: user?.phone,
-                    gender: basicInfo?.gender || user?.gender || "male",
-                    date_of_birth: basicInfo?.date_of_birth || "",
-                    on_behalf: basicInfo?.onbehalf || "1",
-                    marital_status: basicInfo?.maritial_status || "Never Married",
-                },
-                token
-            );
-
-            const serverUrl = response?.data?.photo || response?.photo || asset.uri;
-            setLocalAvatar(serverUrl);
-            if (updateUser) {
-                updateUser({ avatar: serverUrl, avatar_original: serverUrl });
-            }
-            emitMemberAction({ type: "profile_updated", photo: serverUrl });
-            Alert.alert("Success 🎉", "Profile photo updated successfully!");
-        } catch (err) {
-            console.log("Profile photo upload error:", err?.message);
-            Alert.alert("Upload Notice", err?.message || "Profile photo updated locally.");
-        } finally {
-            setUploadingAvatar(false);
-        }
-    };
-
-    const introductionBio = profileData?.introduction || profileData?.intoduction?.introduction || "";
-    const religionName = spiritual?.religion?.name || (typeof spiritual?.religion === "string" ? spiritual.religion : "") || user?.religion || "";
-    const casteName = spiritual?.caste?.name || (typeof spiritual?.caste === "string" ? spiritual.caste : "") || user?.caste || "";
-    const subCasteName = spiritual?.sub_caste?.name || (typeof spiritual?.sub_caste === "string" ? spiritual.sub_caste : "") || "";
-
-    const city = presentAddress?.city?.name || presentAddress?.city || user?.city || "";
-    const state = presentAddress?.state?.name || presentAddress?.state || user?.state || "";
-    const country = presentAddress?.country?.name || presentAddress?.country || user?.country || "";
-    const locationStr = [city, state, country].filter(Boolean).join(", ") || user?.location || "";
-
-    const permanentAddress = profileData?.permanent_address;
-    const permCity = permanentAddress?.city?.name || permanentAddress?.city || "";
-    const permState = permanentAddress?.state?.name || permanentAddress?.state || "";
-    const permCountry = permanentAddress?.country?.name || permanentAddress?.country || "";
-    const permLocationStr = [permCity, permState, permCountry].filter(Boolean).join(", ");
-
-    const lifestyle = profileData?.lifestyles || profileData?.lifestyle;
-    const astronomic = profileData?.astrologies || profileData?.astronomic;
-    const family = profileData?.families_information || profileData?.family_info;
-    const hobbies = profileData?.hobbies_interest || profileData?.hobbies;
-    const attitude = profileData?.attitude_behavior;
-    const residency = profileData?.residence_info;
-    const partnerExpectation = profileData?.partner_expectation;
-    const knownLanguages = profileData?.known_languages || "";
-
-    const heightStr = physical?.height || user?.height || "";
-    const weightStr = physical?.weight || user?.weight || "";
-    const educationStr = Array.isArray(educationArr) && educationArr[0]?.degree ? educationArr[0].degree : (typeof educationArr === "string" ? educationArr : "") || user?.education || "";
-    const careerStr = Array.isArray(careerArr) && careerArr[0]?.designation ? careerArr[0].designation : (typeof careerArr === "string" ? careerArr : "") || user?.profession || user?.career || "";
-
-    // Calculate missing fields in Personal / Basic Information (RED PILL)
-    const basicMissingFields = useMemo(() => {
-        const missing = [];
-        if (!firstName) missing.push({ key: "first_name", label: "First Name" });
-        if (!memberGender) missing.push({ key: "gender", label: "Gender" });
-        if (!memberDob) missing.push({ key: "date_of_birth", label: "Date of Birth" });
-        if (!maritalStatus) missing.push({ key: "marital_status", label: "Marital Status" });
-        if (!onBehalfName) missing.push({ key: "on_behalf", label: "Profile Created For" });
-        if (!userPhone && !userEmail) missing.push({ key: "contact", label: "Phone or Email" });
-        return missing;
-    }, [firstName, memberGender, memberDob, maritalStatus, onBehalfName, userPhone, userEmail]);
-
-    const planMaxGallery = user?.membership ? 5 : 2;
-
-    const handleGalleryAddPress = () => {
-        if (galleryImages.length >= planMaxGallery) {
-            Alert.alert(
-                "Upload Limit Reached",
-                `Your ${planName} allows a maximum of ${planMaxGallery} gallery photos. You currently have ${galleryImages.length} photos uploaded. Please upgrade your package or manage existing photos.`,
-                [
-                    { text: "Manage Photos", onPress: () => navigation.navigate("Gallery") },
-                    { text: "Upgrade Plan 💎", onPress: () => navigation.navigate("Packages") },
-                ]
-            );
-            return;
-        }
-        navigation.navigate("Gallery");
-    };
-
-    return (
-        <SafeAreaView style={styles.safeArea} edges={["top", "left", "right"]}>
-            {/* ---------- STICKY HEADER ---------- */}
-            <ScreenHeader
-                title="My Profile"
-                subtitle="Your account & matrimonial profile"
-                badge={planName}
-                badgeColor={user?.membership ? "#7C3AED" : COLORS.primary}
-                badgeBgColor={user?.membership ? "#F3E8FF" : "#FFF0F5"}
-                rightElement={
-                    <TouchableOpacity
-                        style={styles.headerEditBtn}
-                        onPress={() => navigation.navigate("EditProfile")}
-                        activeOpacity={0.8}
-                    >
-                        <Ionicons name="create-outline" size={15} color={COLORS.primary} style={{ marginRight: 4 }} />
-                        <Text style={styles.headerEditText}>Edit</Text>
-                    </TouchableOpacity>
-                }
-            />
-
-            {/* ---------- SCROLLABLE CONTENT ---------- */}
-            <KeyboardAwareScrollView
-                contentContainerStyle={styles.scroll}
-                showsVerticalScrollIndicator={false}
-                refreshControl={
-                    <RefreshControl
-                        refreshing={refreshing}
-                        onRefresh={onRefresh}
-                        colors={[COLORS.primary]}
-                        tintColor={COLORS.primary}
-                    />
-                }
-            >
-                {/* Email Verification Notice */}
-                {emailUnverified && (
-                    <View style={styles.verificationBanner}>
-                        <View style={styles.verificationIconWrap}>
-                            <Text style={styles.verificationIcon}>✉️</Text>
-                        </View>
-                        <View style={styles.verificationTextWrap}>
-                            <Text style={styles.verificationTitle}>Email Verification Pending</Text>
-                            <Text style={styles.verificationSubtitle}>
-                                Please verify your email on hindumatrimony.org.in to unlock your full profile details and gallery.
-                            </Text>
-                        </View>
-                    </View>
-                )}
-
-                <View style={styles.profileCard}>
-                    <View style={styles.avatarWrap}>
-                        <Image
-                            source={{ uri: userPhoto }}
-                            style={styles.avatarImage}
-                            resizeMode="cover"
-                        />
-                        {uploadingAvatar ? (
-                            <View style={styles.avatarLoadingOverlay}>
-                                <ActivityIndicator size="small" color="#fff" />
-                            </View>
-                        ) : (
-                            <TouchableOpacity
-                                style={styles.avatarEditBtn}
-                                onPress={promptProfilePhoto}
-                                activeOpacity={0.8}
-                            >
-                                <Ionicons name="camera" size={14} color="#fff" />
-                            </TouchableOpacity>
-                        )}
-                    </View>
-
-                    <Text style={styles.name}>{fullName}</Text>
-
-                    {memberCode ? (
-                        <View style={styles.codeBadge}>
-                            <Text style={styles.codeText}>ID: {memberCode}</Text>
-                        </View>
-                    ) : null}
-
-                    {memberAge || memberGender ? (
-                        <Text style={styles.meta}>
-                            {[memberAge ? `${memberAge} yrs` : null, memberGender]
-                                .filter(Boolean)
-                                .join(" • ")}
-                        </Text>
-                    ) : (
-                        <Text style={styles.meta}>{userEmail || userPhone || "Welcome"}</Text>
-                    )}
-
-                    <View style={styles.badgeRow}>
-                        <View style={styles.planBadge}>
-                            <Text style={styles.planBadgeText}>{planName}</Text>
-                        </View>
-                        {onBehalfName ? (
-                            <View style={styles.onBehalfBadge}>
-                                <Text style={styles.onBehalfBadgeText}>
-                                    For {onBehalfName}
-                                </Text>
-                            </View>
-                        ) : null}
-                    </View>
-
-                    <TouchableOpacity
-                        style={styles.editProfileBtn}
-                        onPress={() => navigation.navigate("EditProfile")}
-                        activeOpacity={0.8}
-                    >
-                        <Text style={styles.editProfileBtnText}>Edit Profile</Text>
-                    </TouchableOpacity>
-                </View>
-
-                {/* Photo Gallery Section */}
-                <View style={styles.galleryCard}>
-                    <View style={styles.galleryCardHeader}>
-                        <View style={styles.galleryHeaderLeft}>
-                            <Ionicons name="images-outline" size={18} color={COLORS.primary} style={{ marginRight: 6 }} />
-                            <Text style={styles.galleryCardTitle}>Photo Gallery</Text>
-                            {galleryImages.length > 0 && (
-                                <View style={[styles.galleryCountBadge, galleryImages.length >= planMaxGallery && { backgroundColor: "#FEE2E2" }]}>
-                                    <Text style={[styles.galleryCountBadgeText, galleryImages.length >= planMaxGallery && { color: "#DC2626" }]}>
-                                        {galleryImages.length}/{planMaxGallery}
-                                    </Text>
-                                </View>
-                            )}
-                        </View>
-                        <TouchableOpacity
-                            onPress={() => navigation.navigate("Gallery")}
-                            activeOpacity={0.7}
-                            style={styles.galleryManageBtn}
-                        >
-                            <Text style={styles.galleryManageText}>Manage</Text>
-                            <Ionicons name="chevron-forward" size={14} color={COLORS.primary} />
-                        </TouchableOpacity>
-                    </View>
-
-                    {galleryImages.length > 0 ? (
-                        <ScrollView
-                            horizontal
-                            showsHorizontalScrollIndicator={false}
-                            contentContainerStyle={styles.galleryScrollContent}
-                        >
-                            {galleryImages.map((img, idx) => (
-                                <TouchableOpacity
-                                    key={String(img?.id ?? img?.image_path ?? `gallery_${idx}`)}
-                                    style={styles.galleryThumbTouch}
-                                    onPress={() => navigation.navigate("Gallery")}
-                                    activeOpacity={0.85}
-                                >
-                                    <Image
-                                        source={{ uri: img.image_path }}
-                                        style={styles.galleryThumbImg}
-                                        resizeMode="cover"
-                                    />
-                                </TouchableOpacity>
-                            ))}
-
-                            <TouchableOpacity
-                                style={styles.galleryAddMoreCard}
-                                onPress={handleGalleryAddPress}
-                                activeOpacity={0.7}
-                            >
-                                <Ionicons
-                                    name={galleryImages.length >= planMaxGallery ? "diamond" : "add-circle-outline"}
-                                    size={22}
-                                    color={COLORS.primary}
-                                />
-                                <Text style={styles.galleryAddMoreText}>
-                                    {galleryImages.length >= planMaxGallery ? "Upgrade" : "Add More"}
-                                </Text>
-                            </TouchableOpacity>
-                        </ScrollView>
-                    ) : (
-                        <TouchableOpacity
-                            style={styles.galleryEmptyBox}
-                            onPress={handleGalleryAddPress}
-                            activeOpacity={0.75}
-                        >
-                            <View style={styles.galleryEmptyIconCircle}>
-                                <Ionicons name="camera-outline" size={22} color={COLORS.primary} />
-                            </View>
-                            <View style={styles.galleryEmptyTextWrap}>
-                                <Text style={styles.galleryEmptyTitle}>No gallery photos yet</Text>
-                                <Text style={styles.galleryEmptySubtitle}>
-                                    Add photos to get up to 5x more profile responses
-                                </Text>
-                            </View>
-                            <View style={styles.galleryEmptyAddBtn}>
-                                <Text style={styles.galleryEmptyAddBtnText}>+ Add</Text>
-                            </View>
-                        </TouchableOpacity>
-                    )}
-                </View>
-
-                {/* Happy Story Section */}
-                <View style={styles.happyStoryCard}>
-                    <View style={styles.happyStoryHeader}>
-                        <View style={styles.happyStoryHeaderLeft}>
-                            <Text style={styles.happyStoryHeaderEmoji}>💍</Text>
-                            <Text style={styles.happyStoryTitle}>Happy Story</Text>
-                            {happyStoryData.hasStory && (
-                                <View style={styles.happyStoryBadge}>
-                                    <Text style={styles.happyStoryBadgeText}>Published</Text>
-                                </View>
-                            )}
-                        </View>
-                        <TouchableOpacity
-                            onPress={() => navigation.navigate("HappyStory")}
-                            activeOpacity={0.7}
-                            style={styles.happyStoryActionBtn}
-                        >
-                            <Text style={styles.happyStoryActionText}>
-                                {happyStoryData.hasStory ? "View Story" : "+ Add Story"}
-                            </Text>
-                            <Ionicons name="chevron-forward" size={14} color={COLORS.primary} />
-                        </TouchableOpacity>
-                    </View>
-
-                    {happyStoryData.hasStory && happyStoryData.story ? (
-                        <TouchableOpacity
-                            style={styles.storyPreviewRow}
-                            onPress={() => navigation.navigate("HappyStory")}
-                            activeOpacity={0.85}
-                        >
-                            {happyStoryData.story.photos ? (
-                                <Image
-                                    source={{ uri: happyStoryData.story.photos }}
-                                    style={styles.storyPreviewPhoto}
-                                    resizeMode="cover"
-                                />
-                            ) : (
-                                <View style={styles.storyPreviewPhotoFallback}>
-                                    <Text style={{ fontSize: 24 }}>💍</Text>
-                                </View>
-                            )}
-                            <View style={styles.storyPreviewTextWrap}>
-                                <Text style={styles.storyPreviewTitle} numberOfLines={1}>
-                                    {happyStoryData.story.title || "Our Happy Journey"}
-                                </Text>
-                                <View style={styles.storyPartnerPill}>
-                                    <Ionicons name="heart" size={11} color={COLORS.primary} />
-                                    <Text style={styles.storyPartnerText} numberOfLines={1}>
-                                        With {happyStoryData.story.partner_name || "Partner"}
-                                    </Text>
-                                </View>
-                                {happyStoryData.story.details ? (
-                                    <Text style={styles.storyPreviewSnippet} numberOfLines={2}>
-                                        {happyStoryData.story.details}
-                                    </Text>
-                                ) : null}
-                            </View>
-                        </TouchableOpacity>
-                    ) : (
-                        <TouchableOpacity
-                            style={styles.happyStoryEmptyBox}
-                            onPress={() => navigation.navigate("HappyStory")}
-                            activeOpacity={0.75}
-                        >
-                            <View style={styles.happyStoryEmptyIconWrap}>
-                                <Text style={{ fontSize: 22 }}>💖</Text>
-                            </View>
-                            <View style={styles.happyStoryEmptyTextWrap}>
-                                <Text style={styles.happyStoryEmptyTitle}>Share Your Happy Story</Text>
-                                <Text style={styles.happyStoryEmptySubtitle}>
-                                    Found your partner on HinduMatrimony? Share your journey so everyone can see!
-                                </Text>
-                            </View>
-                            <View style={styles.happyStoryEmptyBtn}>
-                                <Text style={styles.happyStoryEmptyBtnText}>Share</Text>
-                            </View>
-                        </TouchableOpacity>
-                    )}
-                </View>
-
-                {/* ======================================================= */}
-                {/* 1. About Me (Introduction)                              */}
-                {/* ======================================================= */}
-                <View style={styles.overviewCard}>
-                    <View style={styles.sectionHeaderRow}>
-                        <View style={styles.sectionHeaderLeft}>
-                            <Text style={styles.sectionHeaderIcon}>📝</Text>
-                            <Text style={styles.overviewTitle}>About Me</Text>
-                        </View>
-                        <TouchableOpacity
-                            onPress={() => navigation.navigate("EditProfile", { section: "introduction" })}
-                            activeOpacity={0.7}
-                            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                        >
-                            <Text style={styles.sectionEditAction}>Edit</Text>
-                        </TouchableOpacity>
-                    </View>
-
-                    {introductionBio ? (
-                        <Text style={styles.bioText}>{introductionBio}</Text>
-                    ) : (
-                        <TouchableOpacity
-                            onPress={() => navigation.navigate("EditProfile", { section: "introduction" })}
-                            style={styles.addSectionPrompt}
-                            activeOpacity={0.7}
-                        >
-                            <Ionicons name="add-circle-outline" size={15} color={COLORS.primary} style={{ marginRight: 6 }} />
-                            <Text style={styles.addSectionPromptText}>Add an introduction bio to get up to 3x more responses</Text>
-                        </TouchableOpacity>
-                    )}
-                </View>
-
-                {/* ======================================================= */}
-                {/* 2. Personal Information (WITH RED MISSING INFO PILL)    */}
-                {/* ======================================================= */}
-                <View style={styles.overviewCard}>
-                    <View style={styles.sectionHeaderRow}>
-                        <View style={styles.sectionHeaderLeft}>
-                            <Text style={styles.sectionHeaderIcon}>👤</Text>
-                            <Text style={styles.overviewTitle}>Personal Information</Text>
-
-                            {/* RED PILL / COMPLETE BADGE */}
-                            {basicMissingFields.length > 0 ? (
-                                <View style={styles.missingBadgePill}>
-                                    <Ionicons name="alert-circle" size={11} color="#DC2626" style={{ marginRight: 3 }} />
-                                    <Text style={styles.missingBadgeText}>{basicMissingFields.length} info missing</Text>
-                                </View>
-                            ) : (
-                                <View style={styles.completeBadgePill}>
-                                    <Ionicons name="checkmark-circle" size={11} color="#059669" style={{ marginRight: 3 }} />
-                                    <Text style={styles.completeBadgeText}>Complete</Text>
-                                </View>
-                            )}
-                        </View>
-                        <TouchableOpacity
-                            onPress={() => navigation.navigate("EditProfile", { section: "basic" })}
-                            activeOpacity={0.7}
-                            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                        >
-                            <Text style={styles.sectionEditAction}>Edit</Text>
-                        </TouchableOpacity>
-                    </View>
-
-                    {firstName || lastName ? (
-                        <View style={styles.overviewRow}>
-                            <Text style={styles.overviewLabel}>Full Name</Text>
-                            <Text style={styles.overviewValue}>{fullName}</Text>
-                        </View>
-                    ) : null}
-
-                    {memberGender ? (
-                        <View style={styles.overviewRow}>
-                            <Text style={styles.overviewLabel}>Gender</Text>
-                            <Text style={styles.overviewValue}>{memberGender}</Text>
-                        </View>
-                    ) : null}
-
-                    {memberDob ? (
-                        <View style={styles.overviewRow}>
-                            <Text style={styles.overviewLabel}>Date of Birth</Text>
-                            <Text style={styles.overviewValue}>{memberDob}{memberAge ? ` (${memberAge} yrs)` : ""}</Text>
-                        </View>
-                    ) : memberAge ? (
-                        <View style={styles.overviewRow}>
-                            <Text style={styles.overviewLabel}>Age</Text>
-                            <Text style={styles.overviewValue}>{memberAge} yrs</Text>
-                        </View>
-                    ) : null}
-
-                    {maritalStatus ? (
-                        <View style={styles.overviewRow}>
-                            <Text style={styles.overviewLabel}>Marital Status</Text>
-                            <Text style={styles.overviewValue}>{maritalStatus}</Text>
-                        </View>
-                    ) : null}
-
-                    {onBehalfName ? (
-                        <View style={styles.overviewRow}>
-                            <Text style={styles.overviewLabel}>Profile Created For</Text>
-                            <Text style={styles.overviewValue}>{onBehalfName}</Text>
-                        </View>
-                    ) : null}
-
-                    {motherTongue ? (
-                        <View style={styles.overviewRow}>
-                            <Text style={styles.overviewLabel}>Mother Tongue</Text>
-                            <Text style={styles.overviewValue}>{motherTongue}</Text>
-                        </View>
-                    ) : null}
-
-                    {/* Prominent Missing Fields List */}
-                    {basicMissingFields.length > 0 && (
-                        <View style={styles.missingItemsContainer}>
-                            <Text style={styles.missingSectionHeader}>Missing details to complete:</Text>
-                            {basicMissingFields.map((f) => (
-                                <View key={f.key} style={styles.missingItemRow}>
-                                    <View style={styles.missingItemTextCol}>
-                                        <Text style={styles.missingItemLabel}>{f.label}</Text>
-                                        <Text style={styles.missingItemNotice}>Not specified</Text>
-                                    </View>
-                                    <TouchableOpacity
-                                        style={styles.missingAddBtn}
-                                        onPress={() => navigation.navigate("EditProfile", { section: "basic" })}
-                                        activeOpacity={0.7}
-                                    >
-                                        <Text style={styles.missingAddBtnText}>+ Add</Text>
-                                    </TouchableOpacity>
-                                </View>
-                            ))}
-                        </View>
-                    )}
-                </View>
-
-                {/* ======================================================= */}
-                {/* 3. Religion & Community                                 */}
-                {/* ======================================================= */}
-                <View style={styles.overviewCard}>
-                    <View style={styles.sectionHeaderRow}>
-                        <View style={styles.sectionHeaderLeft}>
-                            <Text style={styles.sectionHeaderIcon}>🪔</Text>
-                            <Text style={styles.overviewTitle}>Religion & Community</Text>
-                        </View>
-                        <TouchableOpacity
-                            onPress={() => navigation.navigate("EditProfile", { section: "spiritual" })}
-                            activeOpacity={0.7}
-                            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                        >
-                            <Text style={styles.sectionEditAction}>Edit</Text>
-                        </TouchableOpacity>
-                    </View>
-
-                    {religionName ? (
-                        <View style={styles.overviewRow}>
-                            <Text style={styles.overviewLabel}>Religion</Text>
-                            <Text style={styles.overviewValue}>{religionName}</Text>
-                        </View>
-                    ) : null}
-
-                    {casteName ? (
-                        <View style={styles.overviewRow}>
-                            <Text style={styles.overviewLabel}>Caste</Text>
-                            <Text style={styles.overviewValue}>
-                                {casteName}{subCasteName ? ` • ${subCasteName}` : ""}
-                            </Text>
-                        </View>
-                    ) : null}
-
-                    {spiritual?.ethnicity ? (
-                        <View style={styles.overviewRow}>
-                            <Text style={styles.overviewLabel}>Ethnicity</Text>
-                            <Text style={styles.overviewValue}>{spiritual.ethnicity}</Text>
-                        </View>
-                    ) : null}
-
-                    {spiritual?.personal_value ? (
-                        <View style={styles.overviewRow}>
-                            <Text style={styles.overviewLabel}>Personal Value</Text>
-                            <Text style={styles.overviewValue}>{spiritual.personal_value}</Text>
-                        </View>
-                    ) : null}
-
-                    {!religionName && !casteName && (
-                        <TouchableOpacity
-                            onPress={() => navigation.navigate("EditProfile", { section: "spiritual" })}
-                            style={styles.addSectionPrompt}
-                            activeOpacity={0.7}
-                        >
-                            <Ionicons name="add-circle-outline" size={15} color={COLORS.primary} style={{ marginRight: 6 }} />
-                            <Text style={styles.addSectionPromptText}>Add religion and caste details</Text>
-                        </TouchableOpacity>
-                    )}
-                </View>
-
-                {/* ======================================================= */}
-                {/* 4. Contact & Address Details                            */}
-                {/* ======================================================= */}
-                <View style={styles.overviewCard}>
-                    <View style={styles.sectionHeaderRow}>
-                        <View style={styles.sectionHeaderLeft}>
-                            <Text style={styles.sectionHeaderIcon}>📍</Text>
-                            <Text style={styles.overviewTitle}>Contact & Location</Text>
-                        </View>
-                        <TouchableOpacity
-                            onPress={() => navigation.navigate("EditProfile", { section: "address" })}
-                            activeOpacity={0.7}
-                            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                        >
-                            <Text style={styles.sectionEditAction}>Edit</Text>
-                        </TouchableOpacity>
-                    </View>
-
-                    {userPhone ? (
-                        <View style={styles.overviewRow}>
-                            <Text style={styles.overviewLabel}>Phone</Text>
-                            <Text style={styles.overviewValue}>{userPhone}</Text>
-                        </View>
-                    ) : null}
-
-                    {userEmail ? (
-                        <View style={styles.overviewRow}>
-                            <Text style={styles.overviewLabel}>Email</Text>
-                            <Text style={styles.overviewValue}>{userEmail}</Text>
-                        </View>
-                    ) : null}
-
-                    {locationStr ? (
-                        <View style={styles.overviewRow}>
-                            <Text style={styles.overviewLabel}>Present Location</Text>
-                            <Text style={styles.overviewValue}>{locationStr}</Text>
-                        </View>
-                    ) : null}
-
-                    {permLocationStr ? (
-                        <View style={styles.overviewRow}>
-                            <Text style={styles.overviewLabel}>Permanent Location</Text>
-                            <Text style={styles.overviewValue}>{permLocationStr}</Text>
-                        </View>
-                    ) : null}
-                </View>
-
-                {/* ======================================================= */}
-                {/* 5. Physical Attributes                                 */}
-                {/* ======================================================= */}
-                <View style={styles.overviewCard}>
-                    <View style={styles.sectionHeaderRow}>
-                        <View style={styles.sectionHeaderLeft}>
-                            <Text style={styles.sectionHeaderIcon}>🏃</Text>
-                            <Text style={styles.overviewTitle}>Physical Attributes</Text>
-                        </View>
-                        <TouchableOpacity
-                            onPress={() => navigation.navigate("EditProfile", { section: "physical" })}
-                            activeOpacity={0.7}
-                            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                        >
-                            <Text style={styles.sectionEditAction}>Edit</Text>
-                        </TouchableOpacity>
-                    </View>
-
-                    {heightStr ? (
-                        <View style={styles.overviewRow}>
-                            <Text style={styles.overviewLabel}>Height</Text>
-                            <Text style={styles.overviewValue}>{heightStr} ft</Text>
-                        </View>
-                    ) : null}
-
-                    {weightStr ? (
-                        <View style={styles.overviewRow}>
-                            <Text style={styles.overviewLabel}>Weight</Text>
-                            <Text style={styles.overviewValue}>{weightStr} kg</Text>
-                        </View>
-                    ) : null}
-
-                    {physical?.blood_group ? (
-                        <View style={styles.overviewRow}>
-                            <Text style={styles.overviewLabel}>Blood Group</Text>
-                            <Text style={styles.overviewValue}>{physical.blood_group}</Text>
-                        </View>
-                    ) : null}
-
-                    {physical?.complexion ? (
-                        <View style={styles.overviewRow}>
-                            <Text style={styles.overviewLabel}>Complexion</Text>
-                            <Text style={styles.overviewValue}>{physical.complexion}</Text>
-                        </View>
-                    ) : null}
-
-                    {physical?.body_type ? (
-                        <View style={styles.overviewRow}>
-                            <Text style={styles.overviewLabel}>Body Type</Text>
-                            <Text style={styles.overviewValue}>{physical.body_type}</Text>
-                        </View>
-                    ) : null}
-
-                    {!heightStr && !weightStr && !physical?.blood_group && (
-                        <TouchableOpacity
-                            onPress={() => navigation.navigate("EditProfile", { section: "physical" })}
-                            style={styles.addSectionPrompt}
-                            activeOpacity={0.7}
-                        >
-                            <Ionicons name="add-circle-outline" size={15} color={COLORS.primary} style={{ marginRight: 6 }} />
-                            <Text style={styles.addSectionPromptText}>Add height, weight, and physical attributes</Text>
-                        </TouchableOpacity>
-                    )}
-                </View>
-
-                {/* ======================================================= */}
-                {/* 6. Education & Profession                               */}
-                {/* ======================================================= */}
-                {(educationStr || careerStr) ? (
-                    <View style={styles.overviewCard}>
-                        <View style={styles.sectionHeaderRow}>
-                            <View style={styles.sectionHeaderLeft}>
-                                <Text style={styles.sectionHeaderIcon}>💼</Text>
-                                <Text style={styles.overviewTitle}>Education & Profession</Text>
-                            </View>
-                            <TouchableOpacity
-                                onPress={() => navigation.navigate("EditProfile", { section: "partner" })}
-                                activeOpacity={0.7}
-                            >
-                                <Text style={styles.sectionEditAction}>Edit</Text>
-                            </TouchableOpacity>
-                        </View>
-
-                        {educationStr ? (
-                            <View style={styles.overviewRow}>
-                                <Text style={styles.overviewLabel}>Education</Text>
-                                <Text style={styles.overviewValue}>{educationStr}</Text>
-                            </View>
-                        ) : null}
-
-                        {careerStr ? (
-                            <View style={styles.overviewRow}>
-                                <Text style={styles.overviewLabel}>Profession</Text>
-                                <Text style={styles.overviewValue}>{careerStr}</Text>
-                            </View>
-                        ) : null}
-                    </View>
-                ) : null}
-
-                {/* ======================================================= */}
-                {/* 7. Language Details                                     */}
-                {/* ======================================================= */}
-                {(motherTongue || knownLanguages) ? (
-                    <View style={styles.overviewCard}>
-                        <View style={styles.sectionHeaderRow}>
-                            <View style={styles.sectionHeaderLeft}>
-                                <Text style={styles.sectionHeaderIcon}>🗣️</Text>
-                                <Text style={styles.overviewTitle}>Language Details</Text>
-                            </View>
-                            <TouchableOpacity
-                                onPress={() => navigation.navigate("EditProfile", { section: "language" })}
-                                activeOpacity={0.7}
-                            >
-                                <Text style={styles.sectionEditAction}>Edit</Text>
-                            </TouchableOpacity>
-                        </View>
-
-                        {motherTongue ? (
-                            <View style={styles.overviewRow}>
-                                <Text style={styles.overviewLabel}>Mother Tongue</Text>
-                                <Text style={styles.overviewValue}>{motherTongue}</Text>
-                            </View>
-                        ) : null}
-
-                        {knownLanguages ? (
-                            <View style={styles.overviewRow}>
-                                <Text style={styles.overviewLabel}>Known Languages</Text>
-                                <Text style={styles.overviewValue}>{knownLanguages}</Text>
-                            </View>
-                        ) : null}
-                    </View>
-                ) : null}
-
-                {/* ======================================================= */}
-                {/* 6. Lifestyle & Habits                                  */}
-                {/* ======================================================= */}
-                {lifestyle ? (
-                    <View style={styles.overviewCard}>
-                        <View style={styles.sectionHeaderRow}>
-                            <View style={styles.sectionHeaderLeft}>
-                                <Text style={styles.sectionHeaderIcon}>🥗</Text>
-                                <Text style={styles.overviewTitle}>Lifestyle & Habits</Text>
-                            </View>
-                            <TouchableOpacity
-                                onPress={() => navigation.navigate("EditProfile", { section: "lifestyle" })}
-                                activeOpacity={0.7}
-                            >
-                                <Text style={styles.sectionEditAction}>Edit</Text>
-                            </TouchableOpacity>
-                        </View>
-
-                        {lifestyle.diet ? (
-                            <View style={styles.overviewRow}>
-                                <Text style={styles.overviewLabel}>Diet</Text>
-                                <Text style={styles.overviewValue}>{lifestyle.diet}</Text>
-                            </View>
-                        ) : null}
-
-                        {lifestyle.drink ? (
-                            <View style={styles.overviewRow}>
-                                <Text style={styles.overviewLabel}>Drink</Text>
-                                <Text style={styles.overviewValue}>{lifestyle.drink}</Text>
-                            </View>
-                        ) : null}
-
-                        {lifestyle.smoke ? (
-                            <View style={styles.overviewRow}>
-                                <Text style={styles.overviewLabel}>Smoke</Text>
-                                <Text style={styles.overviewValue}>{lifestyle.smoke}</Text>
-                            </View>
-                        ) : null}
-
-                        {lifestyle.living_with ? (
-                            <View style={styles.overviewRow}>
-                                <Text style={styles.overviewLabel}>Living With</Text>
-                                <Text style={styles.overviewValue}>{lifestyle.living_with}</Text>
-                            </View>
-                        ) : null}
-                    </View>
-                ) : null}
-
-                {/* ======================================================= */}
-                {/* 7. Astronomic / Horoscope                              */}
-                {/* ======================================================= */}
-                {astronomic ? (
-                    <View style={styles.overviewCard}>
-                        <View style={styles.sectionHeaderRow}>
-                            <View style={styles.sectionHeaderLeft}>
-                                <Text style={styles.sectionHeaderIcon}>✨</Text>
-                                <Text style={styles.overviewTitle}>Horoscope & Astrology</Text>
-                            </View>
-                            <TouchableOpacity
-                                onPress={() => navigation.navigate("EditProfile", { section: "astronomic" })}
-                                activeOpacity={0.7}
-                            >
-                                <Text style={styles.sectionEditAction}>Edit</Text>
-                            </TouchableOpacity>
-                        </View>
-
-                        {astronomic.sun_sign ? (
-                            <View style={styles.overviewRow}>
-                                <Text style={styles.overviewLabel}>Sun Sign (Rashi)</Text>
-                                <Text style={styles.overviewValue}>{astronomic.sun_sign}</Text>
-                            </View>
-                        ) : null}
-
-                        {astronomic.moon_sign ? (
-                            <View style={styles.overviewRow}>
-                                <Text style={styles.overviewLabel}>Moon Sign</Text>
-                                <Text style={styles.overviewValue}>{astronomic.moon_sign}</Text>
-                            </View>
-                        ) : null}
-
-                        {astronomic.time_of_birth ? (
-                            <View style={styles.overviewRow}>
-                                <Text style={styles.overviewLabel}>Time of Birth</Text>
-                                <Text style={styles.overviewValue}>{astronomic.time_of_birth}</Text>
-                            </View>
-                        ) : null}
-
-                        {astronomic.city_of_birth ? (
-                            <View style={styles.overviewRow}>
-                                <Text style={styles.overviewLabel}>Birth City</Text>
-                                <Text style={styles.overviewValue}>{astronomic.city_of_birth}</Text>
-                            </View>
-                        ) : null}
-                    </View>
-                ) : null}
-
-                {/* ======================================================= */}
-                {/* 8. Family Details                                      */}
-                {/* ======================================================= */}
-                {family ? (
-                    <View style={styles.overviewCard}>
-                        <View style={styles.sectionHeaderRow}>
-                            <View style={styles.sectionHeaderLeft}>
-                                <Text style={styles.sectionHeaderIcon}>👨‍👩‍👦</Text>
-                                <Text style={styles.overviewTitle}>Family Details</Text>
-                            </View>
-                            <TouchableOpacity
-                                onPress={() => navigation.navigate("EditProfile", { section: "family" })}
-                                activeOpacity={0.7}
-                            >
-                                <Text style={styles.sectionEditAction}>Edit</Text>
-                            </TouchableOpacity>
-                        </View>
-
-                        {family.father ? (
-                            <View style={styles.overviewRow}>
-                                <Text style={styles.overviewLabel}>Father</Text>
-                                <Text style={styles.overviewValue}>{family.father}</Text>
-                            </View>
-                        ) : null}
-
-                        {family.mother ? (
-                            <View style={styles.overviewRow}>
-                                <Text style={styles.overviewLabel}>Mother</Text>
-                                <Text style={styles.overviewValue}>{family.mother}</Text>
-                            </View>
-                        ) : null}
-
-                        {family.sibling ? (
-                            <View style={styles.overviewRow}>
-                                <Text style={styles.overviewLabel}>Siblings</Text>
-                                <Text style={styles.overviewValue}>{family.sibling}</Text>
-                            </View>
-                        ) : null}
-                    </View>
-                ) : null}
-
-                {/* ======================================================= */}
-                {/* 11. Hobbies & Interests                                 */}
-                {/* ======================================================= */}
-                {hobbies && (hobbies.hobbies || hobbies.interests || hobbies.music || hobbies.sports) ? (
-                    <View style={styles.overviewCard}>
-                        <View style={styles.sectionHeaderRow}>
-                            <View style={styles.sectionHeaderLeft}>
-                                <Text style={styles.sectionHeaderIcon}>🎨</Text>
-                                <Text style={styles.overviewTitle}>Hobbies & Interests</Text>
-                            </View>
-                            <TouchableOpacity
-                                onPress={() => navigation.navigate("EditProfile", { section: "hobbies" })}
-                                activeOpacity={0.7}
-                            >
-                                <Text style={styles.sectionEditAction}>Edit</Text>
-                            </TouchableOpacity>
-                        </View>
-
-                        {hobbies.hobbies ? (
-                            <View style={styles.overviewRow}>
-                                <Text style={styles.overviewLabel}>Hobbies</Text>
-                                <Text style={styles.overviewValue}>{hobbies.hobbies}</Text>
-                            </View>
-                        ) : null}
-
-                        {hobbies.interests ? (
-                            <View style={styles.overviewRow}>
-                                <Text style={styles.overviewLabel}>Interests</Text>
-                                <Text style={styles.overviewValue}>{hobbies.interests}</Text>
-                            </View>
-                        ) : null}
-
-                        {hobbies.music ? (
-                            <View style={styles.overviewRow}>
-                                <Text style={styles.overviewLabel}>Favorite Music</Text>
-                                <Text style={styles.overviewValue}>{hobbies.music}</Text>
-                            </View>
-                        ) : null}
-
-                        {hobbies.sports ? (
-                            <View style={styles.overviewRow}>
-                                <Text style={styles.overviewLabel}>Sports & Fitness</Text>
-                                <Text style={styles.overviewValue}>{hobbies.sports}</Text>
-                            </View>
-                        ) : null}
-                    </View>
-                ) : null}
-
-                {/* ======================================================= */}
-                {/* 12. Attitude & Behavior                                 */}
-                {/* ======================================================= */}
-                {attitude && (attitude.affection || attitude.humor || attitude.political_views || attitude.religious_service) ? (
-                    <View style={styles.overviewCard}>
-                        <View style={styles.sectionHeaderRow}>
-                            <View style={styles.sectionHeaderLeft}>
-                                <Text style={styles.sectionHeaderIcon}>🌟</Text>
-                                <Text style={styles.overviewTitle}>Attitude & Values</Text>
-                            </View>
-                            <TouchableOpacity
-                                onPress={() => navigation.navigate("EditProfile", { section: "attitude" })}
-                                activeOpacity={0.7}
-                            >
-                                <Text style={styles.sectionEditAction}>Edit</Text>
-                            </TouchableOpacity>
-                        </View>
-
-                        {attitude.affection ? (
-                            <View style={styles.overviewRow}>
-                                <Text style={styles.overviewLabel}>Affection</Text>
-                                <Text style={styles.overviewValue}>{attitude.affection}</Text>
-                            </View>
-                        ) : null}
-
-                        {attitude.humor ? (
-                            <View style={styles.overviewRow}>
-                                <Text style={styles.overviewLabel}>Humor</Text>
-                                <Text style={styles.overviewValue}>{attitude.humor}</Text>
-                            </View>
-                        ) : null}
-
-                        {attitude.political_views ? (
-                            <View style={styles.overviewRow}>
-                                <Text style={styles.overviewLabel}>Political Views</Text>
-                                <Text style={styles.overviewValue}>{attitude.political_views}</Text>
-                            </View>
-                        ) : null}
-
-                        {attitude.religious_service ? (
-                            <View style={styles.overviewRow}>
-                                <Text style={styles.overviewLabel}>Religious Service</Text>
-                                <Text style={styles.overviewValue}>{attitude.religious_service}</Text>
-                            </View>
-                        ) : null}
-                    </View>
-                ) : null}
-
-                {/* ======================================================= */}
-                {/* 13. Residency Information                               */}
-                {/* ======================================================= */}
-                {residency && (residency.immigration_status || residency.birth_country_id || residency.recidency_country_id) ? (
-                    <View style={styles.overviewCard}>
-                        <View style={styles.sectionHeaderRow}>
-                            <View style={styles.sectionHeaderLeft}>
-                                <Text style={styles.sectionHeaderIcon}>🌐</Text>
-                                <Text style={styles.overviewTitle}>Residency Information</Text>
-                            </View>
-                            <TouchableOpacity
-                                onPress={() => navigation.navigate("EditProfile", { section: "residency" })}
-                                activeOpacity={0.7}
-                            >
-                                <Text style={styles.sectionEditAction}>Edit</Text>
-                            </TouchableOpacity>
-                        </View>
-
-                        {residency.immigration_status ? (
-                            <View style={styles.overviewRow}>
-                                <Text style={styles.overviewLabel}>Immigration Status</Text>
-                                <Text style={styles.overviewValue}>{residency.immigration_status}</Text>
-                            </View>
-                        ) : null}
-                    </View>
-                ) : null}
-
-                {/* ======================================================= */}
-                {/* 9. Partner Expectations                                */}
-                {/* ======================================================= */}
-                {partnerExpectation ? (
-                    <View style={styles.overviewCard}>
-                        <View style={styles.sectionHeaderRow}>
-                            <View style={styles.sectionHeaderLeft}>
-                                <Text style={styles.sectionHeaderIcon}>💖</Text>
-                                <Text style={styles.overviewTitle}>Partner Expectations</Text>
-                            </View>
-                            <TouchableOpacity
-                                onPress={() => navigation.navigate("EditProfile", { section: "partner" })}
-                                activeOpacity={0.7}
-                            >
-                                <Text style={styles.sectionEditAction}>Edit</Text>
-                            </TouchableOpacity>
-                        </View>
-
-                        {partnerExpectation.general ? (
-                            <Text style={[styles.bioText, { marginBottom: 10 }]}>{partnerExpectation.general}</Text>
-                        ) : null}
-
-                        {partnerExpectation.partner_height ? (
-                            <View style={styles.overviewRow}>
-                                <Text style={styles.overviewLabel}>Preferred Height</Text>
-                                <Text style={styles.overviewValue}>{partnerExpectation.partner_height} ft</Text>
-                            </View>
-                        ) : null}
-
-                        {partnerExpectation.partner_diet ? (
-                            <View style={styles.overviewRow}>
-                                <Text style={styles.overviewLabel}>Diet</Text>
-                                <Text style={styles.overviewValue}>{partnerExpectation.partner_diet}</Text>
-                            </View>
-                        ) : null}
-
-                        {partnerExpectation.partner_profession ? (
-                            <View style={styles.overviewRow}>
-                                <Text style={styles.overviewLabel}>Profession</Text>
-                                <Text style={styles.overviewValue}>{partnerExpectation.partner_profession}</Text>
-                            </View>
-                        ) : null}
-
-                        {partnerExpectation.pertner_education ? (
-                            <View style={styles.overviewRow}>
-                                <Text style={styles.overviewLabel}>Education</Text>
-                                <Text style={styles.overviewValue}>{partnerExpectation.pertner_education}</Text>
-                            </View>
-                        ) : null}
-                    </View>
-                ) : null}
-
-                <Section title="Account">
-                    {ACCOUNT_ITEMS.map((item, i) => (
-                        <MenuRow
-                            key={item.label}
-                            item={item}
-                            isLast={i === ACCOUNT_ITEMS.length - 1}
-                            onPress={() => onMenuPress(item)}
-                        />
-                    ))}
-                </Section>
-
-                <Section title="Security">
-                    {SECURITY_ITEMS.map((item, i) => (
-                        <MenuRow
-                            key={item.label}
-                            item={item}
-                            isLast={i === SECURITY_ITEMS.length - 1}
-                            onPress={() => onMenuPress(item)}
-                        />
-                    ))}
-                </Section>
-
-                <Section title="Danger Zone">
-                    {DANGER_ITEMS.map((item, i) => (
-                        <MenuRow
-                            key={item.label}
-                            item={item}
-                            isLast={i === DANGER_ITEMS.length - 1}
-                            onPress={() => onMenuPress(item)}
-                        />
-                    ))}
-                </Section>
-
-                <TouchableOpacity
-                    style={[styles.logoutBtn, loggingOut && { opacity: 0.7 }]}
-                    onPress={handleLogout}
-                    disabled={loggingOut}
-                    activeOpacity={0.85}
-                >
-                    {loggingOut ? (
-                        <ActivityIndicator color="#fff" size="small" />
-                    ) : (
-                        <Text style={styles.logoutText}>Sign Out</Text>
-                    )}
-                </TouchableOpacity>
-
-                <Text style={styles.versionText}>App version 1.0.0</Text>
-            </KeyboardAwareScrollView>
-        </SafeAreaView>
+          },
+        },
+      ],
     );
+  };
+
+  const SECTION_BY_KEY = {
+    photo: "photo",
+    basic: "basic",
+    name: "basic",
+    marital: "basic",
+    address: "address",
+    location: "address",
+    spiritual: "spiritual",
+    religion: "spiritual",
+    caste: "spiritual",
+    education: "education",
+    career: "education",
+    physical: "physical",
+    intro: "introduction",
+    introduction: "introduction",
+    partner: "partner",
+    family: "family",
+    hobbies: "hobbies",
+  };
+
+  const handleMissingPress = (item) => {
+    if (!item) return;
+    const sectionKey = item.section || SECTION_BY_KEY[item.key] || "basic";
+    navigation.navigate("EditProfile", { section: sectionKey });
+  };
+
+  const isStrong = profileCompleteness >= 85;
+  const barColor = isStrong ? "#10B981" : COLORS.primary;
+
+  const summaryLine = [
+    memberAge ? `${memberAge} yrs` : null,
+    memberGender,
+    maritalStatus,
+  ]
+    .filter(Boolean)
+    .join("  |  ");
+
+  const bannerColor = isPremium ? PREMIUM_COLOR : COLORS.primary;
+
+  const hobbyChips = toList(hobbies?.hobbies);
+  const interestChips = toList(hobbies?.interests);
+
+  return (
+    <SafeAreaView style={styles.safeArea} edges={["left", "right"]}>
+      <ScreenHeader
+        title="My Profile"
+        subtitle="Matrimonial presence & account"
+        badge={planName}
+        badgeColor={isPremium ? PREMIUM_COLOR : COLORS.primary}
+        badgeBgColor={isPremium ? PREMIUM_SOFT : "#FFF0F5"}
+      />
+
+      <KeyboardAwareScrollView
+        contentContainerStyle={styles.scroll}
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            colors={[COLORS.primary]}
+            tintColor={COLORS.primary}
+          />
+        }
+      >
+        {emailUnverified && (
+          <View style={styles.verificationBanner}>
+            <Ionicons
+              name="mail-unread-outline"
+              size={20}
+              color="#B78103"
+              style={{ marginRight: 10 }}
+            />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.verificationTitle}>Verify your email</Text>
+              <Text style={styles.verificationSubtitle}>
+                Verify your email on hindumatrimony.org.in to unlock all
+                matrimonial features.
+              </Text>
+            </View>
+          </View>
+        )}
+
+        {/* ================= HERO ================= */}
+        <View style={styles.heroCard}>
+          <View style={[styles.heroBanner, { backgroundColor: bannerColor }]}>
+            <View style={[styles.bannerCircle, styles.bannerCircleA]} />
+            <View style={[styles.bannerCircle, styles.bannerCircleB]} />
+            {memberCode ? (
+              <View style={styles.idPill}>
+                <Text style={styles.idPillText}>ID {memberCode}</Text>
+              </View>
+            ) : null}
+          </View>
+
+          <View style={styles.heroBody}>
+            <View style={styles.avatarRing}>
+              <Image
+                source={{ uri: userPhoto }}
+                style={styles.avatarImg}
+                resizeMode="cover"
+              />
+              {uploadingAvatar ? (
+                <View style={styles.avatarOverlay}>
+                  <ActivityIndicator size="small" color="#fff" />
+                </View>
+              ) : (
+                <TouchableOpacity
+                  style={styles.avatarCameraBtn}
+                  onPress={promptProfilePhoto}
+                  activeOpacity={0.85}
+                >
+                  <Ionicons name="camera" size={14} color="#fff" />
+                </TouchableOpacity>
+              )}
+            </View>
+
+            <View style={styles.nameRow}>
+              <Text style={styles.userName} numberOfLines={1}>
+                {fullName}
+              </Text>
+              <Ionicons
+                name="checkmark-circle"
+                size={18}
+                color="#059669"
+                style={{ marginLeft: 6 }}
+              />
+            </View>
+
+            {summaryLine ? (
+              <Text style={styles.userSummaryText} numberOfLines={1}>
+                {summaryLine}
+              </Text>
+            ) : null}
+
+            {locationStr || religionName ? (
+              <View style={styles.metaRow}>
+                {locationStr ? (
+                  <View style={styles.metaItem}>
+                    <Ionicons
+                      name="location-outline"
+                      size={14}
+                      color={COLORS.textLight}
+                    />
+                    <Text style={styles.metaText} numberOfLines={1}>
+                      {[city, state].filter(Boolean).join(", ") || locationStr}
+                    </Text>
+                  </View>
+                ) : null}
+                {religionName ? (
+                  <View style={styles.metaItem}>
+                    <Ionicons
+                      name="flame-outline"
+                      size={14}
+                      color={COLORS.textLight}
+                    />
+                    <Text style={styles.metaText} numberOfLines={1}>
+                      {religionName}
+                    </Text>
+                  </View>
+                ) : null}
+              </View>
+            ) : null}
+
+            <View style={styles.heroBadgesRow}>
+              <View
+                style={[
+                  styles.planPill,
+                  isPremium ? styles.planPillPremium : styles.planPillFree,
+                ]}
+              >
+                <Ionicons
+                  name={isPremium ? "diamond" : "shield-checkmark-outline"}
+                  size={12}
+                  color={isPremium ? PREMIUM_COLOR : COLORS.primary}
+                  style={{ marginRight: 4 }}
+                />
+                <Text
+                  style={[
+                    styles.planPillText,
+                    { color: isPremium ? PREMIUM_COLOR : COLORS.primary },
+                  ]}
+                >
+                  {planName}
+                </Text>
+              </View>
+              {isAccountDeactivated && (
+                <View
+                  style={[
+                    styles.planPill,
+                    {
+                      backgroundColor: "#FEF2F2",
+                      borderColor: "#FCA5A5",
+                      borderWidth: 1,
+                    },
+                  ]}
+                >
+                  <Ionicons
+                    name="pause-circle"
+                    size={12}
+                    color="#DC2626"
+                    style={{ marginRight: 4 }}
+                  />
+                  <Text
+                    style={[
+                      styles.planPillText,
+                      { color: "#DC2626", fontWeight: "700" },
+                    ]}
+                  >
+                    Paused
+                  </Text>
+                </View>
+              )}
+              {onBehalfName ? (
+                <View style={styles.behalfPill}>
+                  <Text style={styles.behalfPillText}>
+                    Created by{" "}
+                    {onBehalfName.toLowerCase() === "self"
+                      ? "self"
+                      : `your ${onBehalfName.toLowerCase()}`}
+                  </Text>
+                </View>
+              ) : null}
+            </View>
+
+            <View style={styles.heroActionRow}>
+              <TouchableOpacity
+                style={styles.heroPrimaryBtn}
+                onPress={() => navigation.navigate("EditProfile")}
+                activeOpacity={0.85}
+              >
+                <Ionicons
+                  name="create-outline"
+                  size={16}
+                  color="#fff"
+                  style={{ marginRight: 6 }}
+                />
+                <Text style={styles.heroPrimaryBtnText}>Edit profile</Text>
+              </TouchableOpacity>
+
+              {!isPremium ? (
+                <TouchableOpacity
+                  style={styles.heroUpgradeBtn}
+                  onPress={() => navigation.navigate("Packages")}
+                  activeOpacity={0.85}
+                >
+                  <Ionicons
+                    name="sparkles"
+                    size={15}
+                    color={PREMIUM_COLOR}
+                    style={{ marginRight: 5 }}
+                  />
+                  <Text style={styles.heroUpgradeBtnText}>Upgrade</Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
+          </View>
+        </View>
+
+        {/* ================= COMPLETENESS ================= */}
+        <View style={styles.strengthCard}>
+          <View style={styles.strengthHeader}>
+            <Text style={styles.strengthTitle}>Profile strength</Text>
+            <Text style={[styles.strengthPercent, { color: barColor }]}>
+              {profileCompleteness}%
+            </Text>
+          </View>
+
+          <View style={styles.progressBarTrack}>
+            <View
+              style={[
+                styles.progressBarFill,
+                { width: `${profileCompleteness}%`, backgroundColor: barColor },
+              ]}
+            />
+          </View>
+
+          {missingItems.length > 0 ? (
+            <View style={styles.missingListContainer}>
+              <View style={styles.missingListHeader}>
+                <Text
+                  style={styles.missingListTitle}
+                  numberOfLines={1}
+                  ellipsizeMode="tail"
+                >
+                  Missing details ({missingItems.length} left to reach 100%)
+                </Text>
+              </View>
+
+              {missingItems.map((item, idx) => (
+                <TouchableOpacity
+                  key={item.key}
+                  style={[
+                    styles.missingItemRow,
+                    idx === missingItems.length - 1 && styles.missingItemRowLast,
+                  ]}
+                  onPress={() => handleMissingPress(item)}
+                  activeOpacity={0.7}
+                >
+                  <View style={styles.missingItemIconWrap}>
+                    <Ionicons
+                      name={item.icon || "create-outline"}
+                      size={15}
+                      color={COLORS.primary}
+                    />
+                  </View>
+
+                  <View style={styles.missingItemContent}>
+                    <Text
+                      style={styles.missingItemTitle}
+                      numberOfLines={1}
+                      ellipsizeMode="tail"
+                    >
+                      {item.label}
+                    </Text>
+                    <Text
+                      style={styles.missingItemSub}
+                      numberOfLines={1}
+                      ellipsizeMode="tail"
+                    >
+                      {item.sub || "Tap to complete section"}
+                    </Text>
+                  </View>
+
+                  <View style={styles.missingBadge}>
+                    <Text style={styles.missingBadgeText}>+{item.points}%</Text>
+                  </View>
+
+                  <Ionicons
+                    name="chevron-forward"
+                    size={16}
+                    color={COLORS.textLight}
+                  />
+                </TouchableOpacity>
+              ))}
+            </View>
+          ) : (
+            <View style={styles.allCompleteRow}>
+              <Ionicons
+                name="checkmark-circle"
+                size={20}
+                color="#10B981"
+                style={{ marginRight: 8 }}
+              />
+              <Text style={styles.allCompleteText}>
+                Your profile is 100% complete and ready for matches!
+              </Text>
+            </View>
+          )}
+        </View>
+
+        {/* ================= QUICK ACTIONS ================= */}
+        <View style={styles.quickCard}>
+          <QuickAction
+            icon="images-outline"
+            tint={COLORS.primary}
+            bg="#FDF2F8"
+            title="Gallery"
+            sub={
+              galleryImages.length > 0
+                ? `${galleryImages.length} photos`
+                : "Add photos"
+            }
+            onPress={() => navigation.navigate("Gallery")}
+          />
+          <View style={styles.quickDivider} />
+          <QuickAction
+            icon="heart-outline"
+            tint="#EA580C"
+            bg="#FFF7ED"
+            title="Story"
+            sub={happyStoryData.hasStory ? "Published" : "Share yours"}
+            onPress={() => navigation.navigate("HappyStory")}
+          />
+          <View style={styles.quickDivider} />
+          <QuickAction
+            icon="diamond-outline"
+            tint={PREMIUM_COLOR}
+            bg={PREMIUM_SOFT}
+            title="Packages"
+            sub={isPremium ? "Premium" : "Free plan"}
+            onPress={() => navigation.navigate("Packages")}
+          />
+          <View style={styles.quickDivider} />
+          <QuickAction
+            icon="eye-outline"
+            tint="#2563EB"
+            bg="#EFF6FF"
+            title="Viewers"
+            sub="Who viewed you"
+            onPress={() => navigation.navigate("ProfileViewer")}
+          />
+        </View>
+
+        {/* ================= SEGMENT (hidden with profile details) ================= */}
+        {SHOW_PROFILE_DETAILS && (
+          <View style={styles.segmentContainer}>
+            <TouchableOpacity
+              style={[
+                styles.segmentBtn,
+                activeTab === "profile" && styles.segmentBtnActive,
+              ]}
+              onPress={() => setActiveTab("profile")}
+              activeOpacity={0.85}
+            >
+              <Ionicons
+                name="person-outline"
+                size={15}
+                color={
+                  activeTab === "profile" ? COLORS.primary : COLORS.textLight
+                }
+                style={{ marginRight: 6 }}
+              />
+              <Text
+                style={[
+                  styles.segmentText,
+                  activeTab === "profile" && styles.segmentTextActive,
+                ]}
+              >
+                Profile details
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[
+                styles.segmentBtn,
+                activeTab === "settings" && styles.segmentBtnActive,
+              ]}
+              onPress={() => setActiveTab("settings")}
+              activeOpacity={0.85}
+            >
+              <Ionicons
+                name="settings-outline"
+                size={15}
+                color={
+                  activeTab === "settings" ? COLORS.primary : COLORS.textLight
+                }
+                style={{ marginRight: 6 }}
+              />
+              <Text
+                style={[
+                  styles.segmentText,
+                  activeTab === "settings" && styles.segmentTextActive,
+                ]}
+              >
+                Account
+              </Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* ================= TAB: PROFILE ================= */}
+        {SHOW_PROFILE_DETAILS && activeTab === "profile" && (
+          <View style={styles.tabContent}>
+            <ProfileCardSection
+              title="About me"
+              icon="document-text-outline"
+              sectionKey="introduction"
+              navigation={navigation}
+            >
+              {introductionBio ? (
+                <Text style={styles.bioText}>{introductionBio}</Text>
+              ) : (
+                <EmptyPrompt
+                  text="Write a short introduction so matches get to know you"
+                  onPress={() =>
+                    navigation.navigate("EditProfile", {
+                      section: "introduction",
+                    })
+                  }
+                />
+              )}
+            </ProfileCardSection>
+
+            <ProfileCardSection
+              title="Personal information"
+              icon="person-circle-outline"
+              sectionKey="basic"
+              navigation={navigation}
+            >
+              <InfoList
+                rows={[
+                  { label: "Full name", value: fullName },
+                  { label: "Gender", value: memberGender },
+                  {
+                    label: "Date of birth",
+                    value: memberDob
+                      ? `${memberDob}${memberAge ? ` (${memberAge} yrs)` : ""}`
+                      : memberAge
+                        ? `${memberAge} yrs`
+                        : "",
+                  },
+                  { label: "Marital status", value: maritalStatus },
+                  { label: "Profile created for", value: onBehalfName },
+                  { label: "Mother tongue", value: motherTongue },
+                  { label: "Known languages", value: knownLanguages },
+                ]}
+              />
+            </ProfileCardSection>
+
+            <ProfileCardSection
+              title="Religion & community"
+              icon="flame-outline"
+              sectionKey="spiritual"
+              navigation={navigation}
+            >
+              <InfoList
+                rows={[
+                  { label: "Religion", value: religionName },
+                  {
+                    label: "Caste",
+                    value: casteName
+                      ? `${casteName}${subCasteName ? `, ${subCasteName}` : ""}`
+                      : "",
+                  },
+                  { label: "Ethnicity", value: spiritual?.ethnicity },
+                  {
+                    label: "Personal values",
+                    value: spiritual?.personal_value,
+                  },
+                ]}
+              />
+              {!religionName && !casteName && (
+                <EmptyPrompt
+                  text="Add your religion and community"
+                  onPress={() =>
+                    navigation.navigate("EditProfile", { section: "spiritual" })
+                  }
+                />
+              )}
+            </ProfileCardSection>
+
+            <ProfileCardSection
+              title="Contact & location"
+              icon="location-outline"
+              sectionKey="address"
+              navigation={navigation}
+            >
+              <InfoList
+                rows={[
+                  { label: "Phone", value: userPhone },
+                  { label: "Email", value: userEmail },
+                  { label: "Present location", value: locationStr },
+                  { label: "Permanent location", value: permLocationStr },
+                ]}
+              />
+              {!locationStr && !userPhone && (
+                <EmptyPrompt
+                  text="Add your contact and location"
+                  onPress={() =>
+                    navigation.navigate("EditProfile", { section: "address" })
+                  }
+                />
+              )}
+            </ProfileCardSection>
+
+            <ProfileCardSection
+              title="Physical & lifestyle"
+              icon="fitness-outline"
+              sectionKey="physical"
+              navigation={navigation}
+            >
+              <InfoList
+                rows={[
+                  {
+                    label: "Height",
+                    value: heightStr ? `${heightStr} ft` : "",
+                  },
+                  {
+                    label: "Weight",
+                    value: weightStr ? `${weightStr} kg` : "",
+                  },
+                  { label: "Blood group", value: physical?.blood_group },
+                  { label: "Complexion", value: physical?.complexion },
+                  { label: "Body type", value: physical?.body_type },
+                  { label: "Diet", value: lifestyle?.diet },
+                  { label: "Drink", value: lifestyle?.drink },
+                  { label: "Smoke", value: lifestyle?.smoke },
+                  { label: "Living with", value: lifestyle?.living_with },
+                ]}
+              />
+              {!heightStr && !lifestyle?.diet && (
+                <EmptyPrompt
+                  text="Add your physical details and lifestyle"
+                  onPress={() =>
+                    navigation.navigate("EditProfile", { section: "physical" })
+                  }
+                />
+              )}
+            </ProfileCardSection>
+
+            {educationStr || careerStr ? (
+              <ProfileCardSection
+                title="Education & profession"
+                icon="briefcase-outline"
+                sectionKey="education"
+                navigation={navigation}
+              >
+                <InfoList
+                  rows={[
+                    { label: "Education", value: educationStr },
+                    { label: "Profession", value: careerStr },
+                  ]}
+                />
+              </ProfileCardSection>
+            ) : null}
+
+            {astronomic &&
+            (astronomic.sun_sign ||
+              astronomic.moon_sign ||
+              astronomic.time_of_birth ||
+              astronomic.city_of_birth) ? (
+              <ProfileCardSection
+                title="Horoscope"
+                icon="planet-outline"
+                sectionKey="astronomic"
+                navigation={navigation}
+              >
+                <InfoList
+                  rows={[
+                    { label: "Sun sign (Rashi)", value: astronomic.sun_sign },
+                    { label: "Moon sign", value: astronomic.moon_sign },
+                    { label: "Time of birth", value: astronomic.time_of_birth },
+                    { label: "City of birth", value: astronomic.city_of_birth },
+                  ]}
+                />
+              </ProfileCardSection>
+            ) : null}
+
+            {family &&
+            (family.father ||
+              family.mother ||
+              family.sibling ||
+              hobbies?.hobbies ||
+              hobbies?.interests) ? (
+              <ProfileCardSection
+                title="Family & interests"
+                icon="people-outline"
+                sectionKey="family"
+                navigation={navigation}
+              >
+                <InfoList
+                  rows={[
+                    { label: "Father", value: family?.father },
+                    { label: "Mother", value: family?.mother },
+                    { label: "Siblings", value: family?.sibling },
+                  ]}
+                />
+                <ChipGroup label="Hobbies" items={hobbyChips} />
+                <ChipGroup label="Interests" items={interestChips} />
+              </ProfileCardSection>
+            ) : null}
+
+            <ProfileCardSection
+              title="Partner preferences"
+              icon="heart-circle-outline"
+              sectionKey="partner"
+              navigation={navigation}
+            >
+              {partnerExpectation?.general ? (
+                <Text style={[styles.bioText, { marginBottom: 10 }]}>
+                  {partnerExpectation.general}
+                </Text>
+              ) : null}
+              <InfoList
+                rows={[
+                  {
+                    label: "Preferred height",
+                    value: partnerExpectation?.partner_height
+                      ? `${partnerExpectation.partner_height} ft`
+                      : "",
+                  },
+                  { label: "Diet", value: partnerExpectation?.partner_diet },
+                  {
+                    label: "Education",
+                    value: partnerExpectation?.pertner_education,
+                  },
+                  {
+                    label: "Profession",
+                    value: partnerExpectation?.partner_profession,
+                  },
+                ]}
+              />
+              {!partnerExpectation?.general &&
+                !partnerExpectation?.partner_height && (
+                  <EmptyPrompt
+                    text="Set your partner preferences for better matches"
+                    onPress={() =>
+                      navigation.navigate("EditProfile", { section: "partner" })
+                    }
+                  />
+                )}
+            </ProfileCardSection>
+          </View>
+        )}
+
+        {/* ================= TAB: ACCOUNT ================= */}
+        {(!SHOW_PROFILE_DETAILS || activeTab === "settings") && (
+          <View style={styles.tabContent}>
+            <MenuGroup title="Profile & privacy">
+              <MenuRow
+                icon="person-outline"
+                tint={COLORS.primary}
+                bg="#FDF2F8"
+                label="Edit profile"
+                onPress={() => navigation.navigate("EditProfile")}
+              />
+              <MenuRow
+                icon="ban-outline"
+                tint="#4B5563"
+                bg="#F3F4F6"
+                label="Ignored users"
+                onPress={() => navigation.navigate("IgnoredUsers")}
+                last
+              />
+            </MenuGroup>
+
+            <MenuGroup title="Security">
+              <MenuRow
+                icon="key-outline"
+                tint="#059669"
+                bg="#ECFDF5"
+                label="Change password"
+                onPress={() => navigation.navigate("ChangePassword")}
+                last
+              />
+            </MenuGroup>
+
+            <MenuGroup title="Account controls" danger={!isAccountDeactivated}>
+              {isAccountDeactivated ? (
+                <MenuRow
+                  icon="play-circle-outline"
+                  tint="#059669"
+                  bg="#ECFDF5"
+                  label="Activate account"
+                  onPress={() => navigation.navigate("DeactivateAccount")}
+                />
+              ) : (
+                <MenuRow
+                  icon="pause-circle-outline"
+                  tint={COLORS.danger}
+                  bg={COLORS.dangerSoft}
+                  label="Deactivate account"
+                  danger
+                  onPress={() => navigation.navigate("DeactivateAccount")}
+                />
+              )}
+              <MenuRow
+                icon="trash-outline"
+                tint={COLORS.danger}
+                bg={COLORS.dangerSoft}
+                label="Delete account permanently"
+                danger
+                onPress={() => navigation.navigate("DeleteAccount")}
+                last
+              />
+            </MenuGroup>
+
+            <TouchableOpacity
+              style={[styles.logoutBtn, loggingOut && { opacity: 0.7 }]}
+              onPress={handleLogout}
+              disabled={loggingOut}
+              activeOpacity={0.85}
+            >
+              {loggingOut ? (
+                <ActivityIndicator color={COLORS.primary} size="small" />
+              ) : (
+                <>
+                  <Ionicons
+                    name="log-out-outline"
+                    size={18}
+                    color={COLORS.primary}
+                    style={{ marginRight: 8 }}
+                  />
+                  <Text style={styles.logoutText}>Sign out</Text>
+                </>
+              )}
+            </TouchableOpacity>
+
+            <Text style={styles.versionText}>HinduMatrimony app | v1.0.0</Text>
+          </View>
+        )}
+      </KeyboardAwareScrollView>
+    </SafeAreaView>
+  );
 }
 
+/* ------------------------------------------------------------------ */
+/* Styles                                                              */
+/* ------------------------------------------------------------------ */
+
+const CARD_SHADOW = {
+  shadowColor: "#7A4A2B",
+  shadowOffset: { width: 0, height: 4 },
+  shadowOpacity: 0.07,
+  shadowRadius: 12,
+  elevation: 2,
+};
+
 const styles = StyleSheet.create({
-    safeArea: { flex: 1, backgroundColor: COLORS.background },
+  safeArea: {
+    flex: 1,
+    backgroundColor: COLORS.background,
+  },
+  scroll: {
+    padding: 16,
+    paddingBottom: 48,
+  },
 
-    headerRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-    headerTitle: { fontSize: 18, fontFamily: FONTS.semiBold, color: COLORS.text },
+  /* ---------- Verification banner ---------- */
+  verificationBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#FFF9E6",
+    borderWidth: 1,
+    borderColor: "#FFE082",
+    borderRadius: 14,
+    padding: 12,
+    marginBottom: 14,
+  },
+  verificationTitle: {
+    fontSize: 13,
+    fontFamily: FONTS.semiBold,
+    color: "#B78103",
+  },
+  verificationSubtitle: {
+    fontSize: 11,
+    fontFamily: FONTS.regular,
+    color: "#6D540A",
+    marginTop: 2,
+    lineHeight: 15,
+  },
 
-    scroll: { padding: 20, paddingBottom: 40 },
+  /* ---------- Hero ---------- */
+  heroCard: {
+    backgroundColor: COLORS.surface,
+    borderRadius: 26,
+    overflow: "hidden",
+    marginBottom: 14,
+    ...CARD_SHADOW,
+  },
+  heroBanner: {
+    height: 96,
+    overflow: "hidden",
+  },
+  bannerCircle: {
+    position: "absolute",
+    borderRadius: 999,
+    backgroundColor: "rgba(255,255,255,0.14)",
+  },
+  bannerCircleA: {
+    width: 150,
+    height: 150,
+    top: -60,
+    right: -30,
+  },
+  bannerCircleB: {
+    width: 90,
+    height: 90,
+    bottom: -40,
+    left: 24,
+    backgroundColor: "rgba(255,255,255,0.10)",
+  },
+  idPill: {
+    position: "absolute",
+    top: 12,
+    right: 14,
+    backgroundColor: "rgba(0,0,0,0.22)",
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999,
+  },
+  idPillText: {
+    color: "#fff",
+    fontSize: 11,
+    fontFamily: FONTS.medium,
+    letterSpacing: 0.3,
+  },
+  heroBody: {
+    alignItems: "center",
+    paddingHorizontal: 16,
+    paddingBottom: 18,
+  },
+  avatarRing: {
+    marginTop: -52,
+    width: 108,
+    height: 108,
+    borderRadius: 54,
+    backgroundColor: COLORS.surface,
+    alignItems: "center",
+    justifyContent: "center",
+    ...CARD_SHADOW,
+  },
+  avatarImg: {
+    width: 98,
+    height: 98,
+    borderRadius: 49,
+    backgroundColor: "#F3F4F6",
+  },
+  avatarOverlay: {
+    position: "absolute",
+    width: 98,
+    height: 98,
+    borderRadius: 49,
+    backgroundColor: "rgba(0,0,0,0.45)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  avatarCameraBtn: {
+    position: "absolute",
+    bottom: 2,
+    right: 2,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: COLORS.primary,
+    borderWidth: 3,
+    borderColor: COLORS.surface,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  nameRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 12,
+    maxWidth: "100%",
+  },
+  userName: {
+    fontSize: 22,
+    fontFamily: FONTS.bold,
+    color: COLORS.text,
+    letterSpacing: -0.4,
+    flexShrink: 1,
+  },
+  userSummaryText: {
+    fontSize: 13,
+    fontFamily: FONTS.medium,
+    color: COLORS.textLight,
+    marginTop: 4,
+  },
+  metaRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "center",
+    columnGap: 14,
+    rowGap: 4,
+    marginTop: 8,
+  },
+  metaItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    maxWidth: 190,
+  },
+  metaText: {
+    fontSize: 12,
+    fontFamily: FONTS.regular,
+    color: COLORS.textLight,
+    flexShrink: 1,
+  },
+  heroBadgesRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    flexWrap: "wrap",
+    gap: 8,
+    marginTop: 12,
+  },
+  planPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 999,
+  },
+  planPillPremium: {
+    backgroundColor: PREMIUM_SOFT,
+    borderWidth: 1,
+    borderColor: GOLD,
+  },
+  planPillFree: {
+    backgroundColor: "#FFF0F5",
+  },
+  planPillText: {
+    fontSize: 11,
+    fontFamily: FONTS.semiBold,
+  },
+  behalfPill: {
+    backgroundColor: "#F3F4F6",
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 999,
+  },
+  behalfPillText: {
+    fontSize: 11,
+    fontFamily: FONTS.medium,
+    color: "#4B5563",
+  },
+  heroActionRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginTop: 16,
+    alignSelf: "stretch",
+  },
+  heroPrimaryBtn: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: COLORS.primary,
+    paddingVertical: 13,
+    borderRadius: 14,
+    shadowColor: COLORS.primary,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.28,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  heroPrimaryBtnText: {
+    color: "#fff",
+    fontSize: 14,
+    fontFamily: FONTS.semiBold,
+  },
+  heroUpgradeBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: PREMIUM_SOFT,
+    paddingVertical: 13,
+    paddingHorizontal: 18,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "#E9D5FF",
+  },
+  heroUpgradeBtnText: {
+    color: PREMIUM_COLOR,
+    fontSize: 14,
+    fontFamily: FONTS.semiBold,
+  },
 
-    profileCard: {
-        backgroundColor: COLORS.surface,
-        borderRadius: 18,
-        borderWidth: 1,
-        borderColor: COLORS.border,
-        alignItems: "center",
-        paddingVertical: 24,
-        paddingHorizontal: 16,
-        marginBottom: 20,
-        shadowColor: "#000",
-        shadowOpacity: 0.05,
-        shadowRadius: 10,
-        shadowOffset: { width: 0, height: 4 },
-        elevation: 2,
-    },
-    avatarWrap: { position: "relative", marginBottom: 12 },
-    avatar: {
-        width: 96,
-        height: 96,
-        borderRadius: 48,
-        backgroundColor: COLORS.primary,
-        alignItems: "center",
-        justifyContent: "center",
-        borderWidth: 3,
-        borderColor: COLORS.primarySoft,
-    },
-    avatarImage: {
-        width: 96,
-        height: 96,
-        borderRadius: 48,
-        borderWidth: 3,
-        borderColor: COLORS.primarySoft,
-        backgroundColor: "#F3F4F6",
-    },
-    avatarText: { color: "#fff", fontSize: 38, fontFamily: FONTS.bold },
-    avatarEditBtn: {
-        position: "absolute",
-        bottom: 0,
-        right: 0,
-        width: 30,
-        height: 30,
-        borderRadius: 15,
-        backgroundColor: COLORS.primary,
-        borderWidth: 2,
-        borderColor: "#FFFFFF",
-        alignItems: "center",
-        justifyContent: "center",
-        elevation: 3,
-        shadowColor: "#000",
-        shadowOffset: { width: 0, height: 1 },
-        shadowOpacity: 0.2,
-        shadowRadius: 2,
-    },
-    avatarLoadingOverlay: {
-        ...StyleSheet.absoluteFillObject,
-        backgroundColor: "rgba(0,0,0,0.45)",
-        borderRadius: 48,
-        alignItems: "center",
-        justifyContent: "center",
-    },
-    avatarEditIcon: { fontSize: 14 },
-    name: { fontSize: 20, fontFamily: FONTS.bold, color: COLORS.text },
-    codeBadge: {
-        backgroundColor: "#F0EEEC",
-        paddingHorizontal: 10,
-        paddingVertical: 3,
-        borderRadius: 10,
-        marginTop: 4,
-    },
-    codeText: {
-        fontSize: 12,
-        fontFamily: FONTS.medium,
-        color: COLORS.textLight,
-    },
-    meta: { fontSize: 13, fontFamily: FONTS.regular, color: COLORS.textLight, marginTop: 4 },
-    badgeRow: { flexDirection: "row", marginTop: 10, gap: 8 },
-    planBadge: {
-        backgroundColor: COLORS.primarySoft,
-        paddingHorizontal: 12,
-        paddingVertical: 5,
-        borderRadius: 20,
-    },
-    planBadgeText: { fontSize: 11, fontFamily: FONTS.semiBold, color: COLORS.primary },
-    onBehalfBadge: {
-        backgroundColor: "#E8F4FD",
-        paddingHorizontal: 12,
-        paddingVertical: 5,
-        borderRadius: 20,
-    },
-    onBehalfBadgeText: { fontSize: 11, fontFamily: FONTS.semiBold, color: "#1976D2" },
-    editProfileBtn: {
-        marginTop: 16,
-        borderWidth: 1.5,
-        borderColor: COLORS.primary,
-        borderRadius: 10,
-        paddingHorizontal: 20,
-        paddingVertical: 10,
-    },
-    editProfileBtnText: { color: COLORS.primary, fontFamily: FONTS.semiBold, fontSize: 13 },
+  /* ---------- Strength ---------- */
+  strengthCard: {
+    backgroundColor: COLORS.surface,
+    borderRadius: 20,
+    padding: 16,
+    marginBottom: 14,
+    ...CARD_SHADOW,
+  },
+  strengthHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "baseline",
+    marginBottom: 10,
+  },
+  strengthTitle: {
+    fontSize: 15,
+    fontFamily: FONTS.semiBold,
+    color: COLORS.text,
+  },
+  strengthPercent: {
+    fontSize: 20,
+    fontFamily: FONTS.bold,
+    letterSpacing: -0.4,
+  },
+  progressBarTrack: {
+    height: 8,
+    backgroundColor: "#F3EDE8",
+    borderRadius: 4,
+    overflow: "hidden",
+  },
+  progressBarFill: {
+    height: "100%",
+    borderRadius: 4,
+  },
+  /* Missing items list in strength card */
+  missingListContainer: {
+    marginTop: 14,
+    backgroundColor: "#FFF9FA",
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "#FCE7F3",
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    overflow: "hidden",
+  },
+  missingListHeader: {
+    marginBottom: 6,
+    paddingBottom: 6,
+    borderBottomWidth: 1,
+    borderBottomColor: "#FCE7F3",
+  },
+  missingListTitle: {
+    fontSize: 12,
+    fontFamily: FONTS.semiBold,
+    color: COLORS.primary,
+  },
+  missingItemRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: "#FCE7F3",
+  },
+  missingItemRowLast: {
+    borderBottomWidth: 0,
+    paddingBottom: 2,
+  },
+  missingItemIconWrap: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: "#FFE4EE",
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 10,
+  },
+  missingItemContent: {
+    flex: 1,
+    marginRight: 8,
+  },
+  missingItemTitle: {
+    fontSize: 13,
+    fontFamily: FONTS.semiBold,
+    color: COLORS.text,
+  },
+  missingItemSub: {
+    fontSize: 11,
+    fontFamily: FONTS.regular,
+    color: COLORS.textLight,
+    marginTop: 1,
+  },
+  missingBadge: {
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 8,
+    backgroundColor: "#FFE4EE",
+    marginRight: 6,
+  },
+  missingBadgeText: {
+    fontSize: 11,
+    fontFamily: FONTS.bold,
+    color: COLORS.primary,
+  },
+  allCompleteRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 12,
+    padding: 10,
+    borderRadius: 12,
+    backgroundColor: "#ECFDF5",
+    borderWidth: 1,
+    borderColor: "#A7F3D0",
+  },
+  allCompleteText: {
+    fontSize: 12,
+    fontFamily: FONTS.semiBold,
+    color: "#059669",
+    flex: 1,
+  },
 
-    galleryCard: {
-        backgroundColor: COLORS.surface,
-        borderRadius: 14,
-        padding: 16,
-        marginBottom: 20,
-        borderWidth: 1,
-        borderColor: COLORS.border,
-    },
-    galleryCardHeader: {
-        flexDirection: "row",
-        alignItems: "center",
-        justifyContent: "space-between",
-        marginBottom: 12,
-    },
-    galleryHeaderLeft: {
-        flexDirection: "row",
-        alignItems: "center",
-    },
-    galleryCardTitle: {
-        fontSize: 14,
-        fontFamily: FONTS.semiBold,
-        color: COLORS.text,
-    },
-    galleryCountBadge: {
-        backgroundColor: COLORS.primarySoft,
-        borderRadius: 10,
-        paddingHorizontal: 7,
-        paddingVertical: 1,
-        marginLeft: 6,
-    },
-    galleryCountBadgeText: {
-        fontSize: 11,
-        fontFamily: FONTS.bold,
-        color: COLORS.primary,
-    },
-    galleryManageBtn: {
-        flexDirection: "row",
-        alignItems: "center",
-    },
-    galleryManageText: {
-        fontSize: 12,
-        fontFamily: FONTS.medium,
-        color: COLORS.primary,
-        marginRight: 2,
-    },
-    galleryScrollContent: {
-        paddingVertical: 4,
-        flexDirection: "row",
-        alignItems: "center",
-    },
-    galleryThumbTouch: {
-        width: 82,
-        height: 105,
-        borderRadius: 10,
-        overflow: "hidden",
-        marginRight: 10,
-        backgroundColor: "#F3F4F6",
-        borderWidth: 1,
-        borderColor: COLORS.border,
-    },
-    galleryThumbImg: {
-        width: "100%",
-        height: "100%",
-    },
-    galleryAddMoreCard: {
-        width: 82,
-        height: 105,
-        borderRadius: 10,
-        borderWidth: 1.5,
-        borderColor: COLORS.primarySoft,
-        borderStyle: "dashed",
-        backgroundColor: COLORS.surface,
-        alignItems: "center",
-        justifyContent: "center",
-        padding: 6,
-    },
-    galleryAddMoreText: {
-        fontSize: 11,
-        fontFamily: FONTS.medium,
-        color: COLORS.primary,
-        marginTop: 4,
-        textAlign: "center",
-    },
-    galleryEmptyBox: {
-        flexDirection: "row",
-        alignItems: "center",
-        backgroundColor: COLORS.primarySoft || "#FDF2F8",
-        borderRadius: 12,
-        padding: 12,
-    },
-    galleryEmptyIconCircle: {
-        width: 38,
-        height: 38,
-        borderRadius: 19,
-        backgroundColor: "#FFFFFF",
-        alignItems: "center",
-        justifyContent: "center",
-        marginRight: 12,
-    },
-    galleryEmptyTextWrap: {
-        flex: 1,
-    },
-    galleryEmptyTitle: {
-        fontSize: 13,
-        fontFamily: FONTS.semiBold,
-        color: COLORS.text,
-    },
-    galleryEmptySubtitle: {
-        fontSize: 11,
-        fontFamily: FONTS.regular,
-        color: COLORS.textLight,
-        marginTop: 2,
-    },
-    galleryEmptyAddBtn: {
-        backgroundColor: COLORS.primary,
-        paddingHorizontal: 12,
-        paddingVertical: 6,
-        borderRadius: 16,
-        marginLeft: 8,
-    },
-    galleryEmptyAddBtnText: {
-        color: "#FFFFFF",
-        fontSize: 12,
-        fontFamily: FONTS.semiBold,
-    },
+  /* ---------- Quick actions (4 across) ---------- */
+  quickCard: {
+    flexDirection: "row",
+    backgroundColor: COLORS.surface,
+    borderRadius: 20,
+    paddingVertical: 14,
+    paddingHorizontal: 4,
+    marginBottom: 16,
+    ...CARD_SHADOW,
+  },
+  quickItem: {
+    flex: 1,
+    alignItems: "center",
+    paddingHorizontal: 2,
+  },
+  quickDivider: {
+    width: 1,
+    marginVertical: 8,
+    backgroundColor: "#F5EFEA",
+  },
+  quickIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 8,
+  },
+  quickBadge: {
+    position: "absolute",
+    top: -4,
+    right: -4,
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
+    paddingHorizontal: 4,
+    backgroundColor: COLORS.primary,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  quickBadgeText: {
+    color: "#fff",
+    fontSize: 10,
+    fontFamily: FONTS.bold,
+  },
+  quickTitle: {
+    fontSize: 13,
+    fontFamily: FONTS.semiBold,
+    color: COLORS.text,
+  },
+  quickSub: {
+    fontSize: 10.5,
+    fontFamily: FONTS.regular,
+    color: COLORS.textLight,
+    marginTop: 2,
+  },
 
-    happyStoryCard: {
-        backgroundColor: COLORS.surface,
-        borderRadius: 14,
-        padding: 16,
-        marginBottom: 20,
-        borderWidth: 1,
-        borderColor: COLORS.border,
-    },
-    happyStoryHeader: {
-        flexDirection: "row",
-        alignItems: "center",
-        justifyContent: "space-between",
-        marginBottom: 12,
-    },
-    happyStoryHeaderLeft: {
-        flexDirection: "row",
-        alignItems: "center",
-    },
-    happyStoryHeaderEmoji: {
-        fontSize: 16,
-        marginRight: 6,
-    },
-    happyStoryTitle: {
-        fontSize: 14,
-        fontFamily: FONTS.semiBold,
-        color: COLORS.text,
-    },
-    happyStoryBadge: {
-        backgroundColor: "#DCFCE7",
-        borderRadius: 10,
-        paddingHorizontal: 7,
-        paddingVertical: 1,
-        marginLeft: 6,
-    },
-    happyStoryBadgeText: {
-        fontSize: 10,
-        fontFamily: FONTS.bold,
-        color: "#15803D",
-    },
-    happyStoryActionBtn: {
-        flexDirection: "row",
-        alignItems: "center",
-    },
-    happyStoryActionText: {
-        fontSize: 12,
-        fontFamily: FONTS.medium,
-        color: COLORS.primary,
-        marginRight: 2,
-    },
-    storyPreviewRow: {
-        flexDirection: "row",
-        alignItems: "center",
-        backgroundColor: "#FFF8FA",
-        borderRadius: 12,
-        padding: 10,
-        borderWidth: 1,
-        borderColor: "#FCE7F3",
-    },
-    storyPreviewPhoto: {
-        width: 70,
-        height: 70,
-        borderRadius: 10,
-        backgroundColor: "#F3F4F6",
-    },
-    storyPreviewPhotoFallback: {
-        width: 70,
-        height: 70,
-        borderRadius: 10,
-        backgroundColor: "#FCE7F3",
-        alignItems: "center",
-        justifyContent: "center",
-    },
-    storyPreviewTextWrap: {
-        flex: 1,
-        marginLeft: 12,
-    },
-    storyPreviewTitle: {
-        fontSize: 14,
-        fontFamily: FONTS.bold,
-        color: COLORS.text,
-    },
-    storyPartnerPill: {
-        flexDirection: "row",
-        alignItems: "center",
-        marginTop: 3,
-    },
-    storyPartnerText: {
-        fontSize: 12,
-        fontFamily: FONTS.semiBold,
-        color: COLORS.primary,
-        marginLeft: 4,
-    },
-    storyPreviewSnippet: {
-        fontSize: 11,
-        fontFamily: FONTS.regular,
-        color: COLORS.textLight || "#6B7280",
-        marginTop: 4,
-        lineHeight: 15,
-    },
-    happyStoryEmptyBox: {
-        flexDirection: "row",
-        alignItems: "center",
-        backgroundColor: "#FFF1F5",
-        borderRadius: 12,
-        padding: 12,
-        borderWidth: 1,
-        borderColor: "#FCE7F3",
-    },
-    happyStoryEmptyIconWrap: {
-        width: 38,
-        height: 38,
-        borderRadius: 19,
-        backgroundColor: "#FFFFFF",
-        alignItems: "center",
-        justifyContent: "center",
-        marginRight: 12,
-    },
-    happyStoryEmptyTextWrap: {
-        flex: 1,
-    },
-    happyStoryEmptyTitle: {
-        fontSize: 13,
-        fontFamily: FONTS.semiBold,
-        color: COLORS.text,
-    },
-    happyStoryEmptySubtitle: {
-        fontSize: 11,
-        fontFamily: FONTS.regular,
-        color: COLORS.textLight,
-        marginTop: 2,
-        lineHeight: 15,
-    },
-    happyStoryEmptyBtn: {
-        backgroundColor: COLORS.primary,
-        paddingHorizontal: 12,
-        paddingVertical: 6,
-        borderRadius: 16,
-        marginLeft: 8,
-    },
-    happyStoryEmptyBtnText: {
-        color: "#FFFFFF",
-        fontSize: 12,
-        fontFamily: FONTS.semiBold,
-    },
+  /* ---------- Segment ---------- */
+  segmentContainer: {
+    flexDirection: "row",
+    backgroundColor: "#EDE5DE",
+    borderRadius: 16,
+    padding: 4,
+    marginBottom: 14,
+  },
+  segmentBtn: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 11,
+    borderRadius: 12,
+  },
+  segmentBtnActive: {
+    backgroundColor: COLORS.surface,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  segmentText: {
+    fontSize: 13,
+    fontFamily: FONTS.medium,
+    color: COLORS.textLight,
+  },
+  segmentTextActive: {
+    fontFamily: FONTS.semiBold,
+    color: COLORS.primary,
+  },
 
-    headerEditBtn: {
-        flexDirection: "row",
-        alignItems: "center",
-        backgroundColor: "#FFF0F5",
-        paddingHorizontal: 12,
-        paddingVertical: 6,
-        borderRadius: 16,
-        borderWidth: 1,
-        borderColor: "#FCE7F3",
-    },
-    headerEditText: {
-        fontSize: 12,
-        fontFamily: FONTS.semiBold,
-        color: COLORS.primary,
-    },
-    overviewCard: {
-        backgroundColor: COLORS.surface,
-        borderRadius: 14,
-        padding: 16,
-        marginBottom: 16,
-        borderWidth: 1,
-        borderColor: COLORS.border,
-    },
-    sectionHeaderRow: {
-        flexDirection: "row",
-        justifyContent: "space-between",
-        alignItems: "center",
-        marginBottom: 12,
-        paddingBottom: 8,
-        borderBottomWidth: 1,
-        borderBottomColor: "#F3EDE8",
-    },
-    sectionHeaderLeft: {
-        flexDirection: "row",
-        alignItems: "center",
-    },
-    sectionHeaderIcon: {
-        fontSize: 15,
-        marginRight: 6,
-    },
-    overviewTitle: {
-        fontSize: 14,
-        fontFamily: FONTS.semiBold,
-        color: COLORS.text,
-        letterSpacing: -0.2,
-    },
-    missingBadgePill: {
-        flexDirection: "row",
-        alignItems: "center",
-        backgroundColor: "#FEE2E2",
-        paddingHorizontal: 8,
-        paddingVertical: 2,
-        borderRadius: 12,
-        marginLeft: 8,
-        borderWidth: 1,
-        borderColor: "#FCA5A5",
-    },
-    missingBadgeText: {
-        fontSize: 10,
-        fontFamily: FONTS.semiBold,
-        color: "#DC2626",
-    },
-    completeBadgePill: {
-        flexDirection: "row",
-        alignItems: "center",
-        backgroundColor: "#EBF9F5",
-        paddingHorizontal: 7,
-        paddingVertical: 2,
-        borderRadius: 12,
-        marginLeft: 8,
-    },
-    completeBadgeText: {
-        fontSize: 10,
-        fontFamily: FONTS.semiBold,
-        color: "#059669",
-    },
-    bioText: {
-        fontSize: 13,
-        fontFamily: FONTS.regular,
-        color: COLORS.text,
-        lineHeight: 20,
-    },
-    addSectionPrompt: {
-        flexDirection: "row",
-        alignItems: "center",
-        paddingVertical: 8,
-    },
-    addSectionPromptText: {
-        fontSize: 12,
-        fontFamily: FONTS.medium,
-        color: COLORS.primary,
-    },
-    missingItemsContainer: {
-        marginTop: 10,
-        paddingTop: 10,
-        borderTopWidth: 1,
-        borderTopColor: "#FEE2E2",
-    },
-    missingSectionHeader: {
-        fontSize: 11,
-        fontFamily: FONTS.semiBold,
-        color: "#991B1B",
-        marginBottom: 6,
-    },
-    missingItemRow: {
-        flexDirection: "row",
-        justifyContent: "space-between",
-        alignItems: "center",
-        paddingVertical: 6,
-        paddingHorizontal: 10,
-        backgroundColor: "#FEF2F2",
-        borderRadius: 8,
-        marginVertical: 3,
-    },
-    missingItemTextCol: {
-        flex: 1,
-    },
-    missingItemLabel: {
-        fontSize: 12,
-        fontFamily: FONTS.medium,
-        color: "#991B1B",
-    },
-    missingItemNotice: {
-        fontSize: 10,
-        fontFamily: FONTS.regular,
-        color: "#EF4444",
-        marginTop: 1,
-    },
-    missingAddBtn: {
-        backgroundColor: "#DC2626",
-        paddingHorizontal: 10,
-        paddingVertical: 4,
-        borderRadius: 6,
-        marginLeft: 8,
-    },
-    missingAddBtnText: {
-        fontSize: 11,
-        fontFamily: FONTS.semiBold,
-        color: "#fff",
-    },
-    sectionEditAction: {
-        fontSize: 12,
-        fontFamily: FONTS.medium,
-        color: COLORS.primary,
-    },
-    overviewRow: {
-        flexDirection: "row",
-        justifyContent: "space-between",
-        alignItems: "center",
-        paddingVertical: 6,
-    },
-    overviewLabel: {
-        fontSize: 13,
-        fontFamily: FONTS.regular,
-        color: COLORS.textLight,
-    },
-    overviewValue: {
-        fontSize: 13,
-        fontFamily: FONTS.medium,
-        color: COLORS.text,
-    },
+  /* ---------- Detail sections ---------- */
+  tabContent: {
+    gap: 12,
+  },
+  sectionCard: {
+    backgroundColor: COLORS.surface,
+    borderRadius: 18,
+    paddingHorizontal: 16,
+    paddingTop: 14,
+    paddingBottom: 10,
+    ...CARD_SHADOW,
+  },
+  sectionHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 6,
+  },
+  sectionIconBadge: {
+    width: 30,
+    height: 30,
+    borderRadius: 10,
+    backgroundColor: COLORS.primarySoft,
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 10,
+  },
+  sectionTitle: {
+    flex: 1,
+    fontSize: 15,
+    fontFamily: FONTS.semiBold,
+    color: COLORS.text,
+  },
+  sectionEditBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 999,
+    backgroundColor: "#FFF0F5",
+  },
+  sectionEditText: {
+    fontSize: 12,
+    fontFamily: FONTS.semiBold,
+    color: COLORS.primary,
+  },
+  infoRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingVertical: 11,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: "#EADFD6",
+  },
+  infoRowLast: {
+    borderBottomWidth: 0,
+  },
+  infoLabel: {
+    fontSize: 13,
+    fontFamily: FONTS.regular,
+    color: COLORS.textLight,
+    flex: 1,
+  },
+  infoValue: {
+    fontSize: 13,
+    fontFamily: FONTS.medium,
+    color: COLORS.text,
+    flex: 1.3,
+    textAlign: "right",
+  },
+  bioText: {
+    fontSize: 14,
+    fontFamily: FONTS.regular,
+    color: COLORS.text,
+    lineHeight: 21,
+    paddingBottom: 6,
+  },
+  chipBlock: {
+    paddingTop: 8,
+    paddingBottom: 6,
+  },
+  chipBlockLabel: {
+    fontSize: 13,
+    fontFamily: FONTS.regular,
+    color: COLORS.textLight,
+    marginBottom: 8,
+  },
+  chipWrap: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  chip: {
+    backgroundColor: "#FFF0F5",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+  },
+  chipText: {
+    fontSize: 12,
+    fontFamily: FONTS.medium,
+    color: COLORS.primary,
+  },
+  emptyPrompt: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: 12,
+    marginTop: 4,
+    marginBottom: 4,
+    borderRadius: 14,
+    borderWidth: 1.5,
+    borderStyle: "dashed",
+    borderColor: "#F9C6D9",
+    backgroundColor: "#FFFAFC",
+  },
+  emptyPromptIcon: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: "#FFE4EE",
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 10,
+  },
+  emptyPromptText: {
+    flex: 1,
+    fontSize: 13,
+    fontFamily: FONTS.medium,
+    color: COLORS.primary,
+  },
 
-    sectionWrap: { marginBottom: 20 },
-    sectionTitle: {
-        fontSize: 13,
-        fontFamily: FONTS.semiBold,
-        color: COLORS.textLight,
-        marginBottom: 8,
-        marginLeft: 4,
-        textTransform: "uppercase",
-        letterSpacing: 0.5,
-    },
-    listCard: {
-        backgroundColor: COLORS.surface,
-        borderRadius: 14,
-        borderWidth: 1,
-        borderColor: COLORS.border,
-        overflow: "hidden",
-    },
-    item: { flexDirection: "row", alignItems: "center", paddingVertical: 14, paddingHorizontal: 14 },
-    itemBorder: { borderBottomWidth: 1, borderBottomColor: COLORS.border },
-    itemIconWrap: {
-        width: 36,
-        height: 36,
-        borderRadius: 10,
-        backgroundColor: COLORS.primarySoft,
-        alignItems: "center",
-        justifyContent: "center",
-        marginRight: 12,
-    },
-    itemIcon: { fontSize: 16 },
-    itemLabel: { flex: 1, fontSize: 14, fontFamily: FONTS.medium, color: COLORS.text },
-    itemChevron: { fontSize: 20, color: COLORS.textLight },
-
-    logoutBtn: {
-        backgroundColor: COLORS.primary,
-        borderRadius: 12,
-        paddingVertical: 16,
-        alignItems: "center",
-        justifyContent: "center",
-        marginTop: 4,
-        minHeight: 52,
-    },
-    logoutText: { color: "#fff", fontFamily: FONTS.semiBold, fontSize: 15 },
-    versionText: {
-        textAlign: "center",
-        color: COLORS.textLight,
-        fontFamily: FONTS.regular,
-        fontSize: 11,
-        marginTop: 16,
-    },
-    verificationBanner: {
-        flexDirection: "row",
-        alignItems: "center",
-        backgroundColor: "#FFF9E6",
-        borderWidth: 1,
-        borderColor: "#FFE082",
-        borderRadius: 14,
-        padding: 14,
-        marginBottom: 16,
-    },
-    verificationIconWrap: {
-        width: 36,
-        height: 36,
-        borderRadius: 18,
-        backgroundColor: "#FFF0B3",
-        alignItems: "center",
-        justifyContent: "center",
-    },
-    verificationIcon: { fontSize: 18 },
-    verificationTextWrap: { flex: 1, marginLeft: 12 },
-    verificationTitle: {
-        fontSize: 14,
-        fontFamily: FONTS.semiBold,
-        color: "#B78103",
-    },
-    verificationSubtitle: {
-        fontSize: 12,
-        fontFamily: FONTS.regular,
-        color: "#6D540A",
-        marginTop: 2,
-        lineHeight: 16,
-    },
+  /* ---------- Account tab ---------- */
+  menuGroup: {
+    marginBottom: 4,
+  },
+  menuGroupTitle: {
+    fontSize: 13,
+    fontFamily: FONTS.semiBold,
+    color: COLORS.textLight,
+    marginBottom: 8,
+    marginLeft: 6,
+  },
+  menuGroupCard: {
+    backgroundColor: COLORS.surface,
+    borderRadius: 18,
+    paddingHorizontal: 14,
+    ...CARD_SHADOW,
+  },
+  menuRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 13,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: "#EADFD6",
+  },
+  menuRowLast: {
+    borderBottomWidth: 0,
+  },
+  menuIconWrap: {
+    width: 34,
+    height: 34,
+    borderRadius: 11,
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 12,
+  },
+  menuRowLabel: {
+    flex: 1,
+    fontSize: 14,
+    fontFamily: FONTS.medium,
+    color: COLORS.text,
+  },
+  logoutBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: COLORS.surface,
+    borderRadius: 16,
+    borderWidth: 1.5,
+    borderColor: COLORS.primary,
+    paddingVertical: 14,
+    marginTop: 8,
+  },
+  logoutText: {
+    color: COLORS.primary,
+    fontFamily: FONTS.semiBold,
+    fontSize: 15,
+  },
+  versionText: {
+    textAlign: "center",
+    color: COLORS.textLight,
+    fontFamily: FONTS.regular,
+    fontSize: 11,
+    marginTop: 14,
+  },
 });

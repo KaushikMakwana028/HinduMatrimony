@@ -21,24 +21,32 @@ export const PLAN_LIMITS = {
   },
   gold: {
     name: "Gold Package",
-    price: 1999,
+    price: 1499,
     interests: 60,
     contacts: 60,
     gallery: 10,
     profileViews: 0,
   },
+  diamond: {
+    name: "Diamond Package",
+    price: 2999,
+    interests: 120,
+    contacts: 120,
+    gallery: 20,
+    profileViews: 0,
+  },
   platinum: {
     name: "Platinum Package",
     price: 4999,
-    interests: 150,
-    contacts: 150,
-    gallery: 20,
+    interests: 500,
+    contacts: 500,
+    gallery: 50,
     profileViews: 0,
   },
 };
 
 /**
- * Determine active user plan key ('free' | 'silver' | 'gold' | 'platinum')
+ * Determine active user plan key ('free' | 'silver' | 'gold' | 'diamond' | 'platinum')
  */
 export function resolvePlanKey(user, dashboardData) {
   const pkgName = String(
@@ -46,12 +54,13 @@ export function resolvePlanKey(user, dashboardData) {
       dashboardData?.current_package_info?.name ||
       dashboardData?.package_name ||
       user?.package_name ||
-      user?.membership_type ||
       user?.current_package ||
       ""
   ).toLowerCase();
 
+  if (pkgName.includes("free")) return "free";
   if (pkgName.includes("platinum")) return "platinum";
+  if (pkgName.includes("diamond")) return "diamond";
   if (pkgName.includes("gold")) return "gold";
   if (pkgName.includes("silver")) return "silver";
 
@@ -59,31 +68,54 @@ export function resolvePlanKey(user, dashboardData) {
   if (dashboardData?.current_package_info) {
     const pkg = dashboardData.current_package_info;
     const name = String(pkg.package_name || pkg.name || "").toLowerCase();
+    const pkgId = Number(pkg.package_id || pkg.id);
+    const price = Number(pkg.price);
+
+    if (name.includes("free") || pkgId === 1 || price === 0) return "free";
     if (
       name.includes("silver") ||
-      Number(pkg.price) === 999 ||
-      Number(pkg.contact) === 30 ||
-      Number(pkg.photo_gallery) === 5
+      pkgId === 9 ||
+      price === 999 ||
+      (Number(pkg.contact) === 30 && Number(pkg.photo_gallery) === 5)
     ) {
       return "silver";
     }
-    if (name.includes("gold") || Number(pkg.price) === 1999) return "gold";
-    if (name.includes("platinum") || Number(pkg.price) === 4999) return "platinum";
-    if (Number(pkg.price) > 0 || Number(pkg.contact) > 0) return "silver";
+    if (name.includes("gold") || pkgId === 10 || price === 1499 || price === 1999) return "gold";
+    if (name.includes("diamond") || pkgId === 11 || price === 2999) return "diamond";
+    if (name.includes("platinum") || pkgId === 12 || price === 4999) return "platinum";
   }
 
-  // If user has membership flag (1 = Premium) or authenticated member, default to Silver
-  if (
-    user?.membership === 1 ||
-    user?.membership === "1" ||
-    user?.is_premium ||
-    dashboardData?.membership === 1
-  ) {
+  // Check package ID on dashboardData or user (ID 1 is Free Package)
+  const packageId = Number(
+    dashboardData?.package_id ||
+      user?.package_id ||
+      dashboardData?.current_package_id ||
+      user?.current_package_id
+  );
+  if (packageId === 1) return "free";
+  if (packageId === 9) return "silver";
+  if (packageId === 10) return "gold";
+  if (packageId === 11) return "diamond";
+  if (packageId === 12) return "platinum";
+
+  // Active Matrimonial CMS membership values:
+  // 1 = Free membership
+  // 2 = Paid / Premium membership
+  const mem = Number(
+    dashboardData?.membership ??
+      user?.membership ??
+      dashboardData?.membership_type ??
+      user?.membership_type
+  );
+  if (mem === 1) return "free";
+  if (mem >= 2) return "silver";
+
+  if (user?.is_premium || dashboardData?.is_premium) {
     return "silver";
   }
 
-  // Default active subscriber to Silver Package
-  return "silver";
+  // Default is Free Package
+  return "free";
 }
 
 const planService = {
@@ -143,9 +175,24 @@ const planService = {
       remainingInterests = Number(dash.remaining_interest);
     }
 
+    // Explicit package ID from server package info
+    const resolvedPackageId =
+      dash?.current_package_info?.package_id ||
+      dash?.current_package_info?.id ||
+      (planKey === "silver"
+        ? 9
+        : planKey === "gold"
+        ? 10
+        : planKey === "diamond"
+        ? 11
+        : planKey === "platinum"
+        ? 12
+        : 1);
+
     return {
       key: planKey,
       name: resolvedName,
+      packageId: Number(resolvedPackageId),
       price: planConfig.price,
       isPremium,
       maxGallery,

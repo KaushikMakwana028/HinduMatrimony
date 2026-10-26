@@ -1,5 +1,5 @@
 import React from "react";
-import { View, StyleSheet, Platform } from "react-native";
+import { View, StyleSheet, Platform, StatusBar } from "react-native";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -52,7 +52,13 @@ export default function MainTabs() {
     const bottomPadding = Math.max(insets.bottom, 10);
 
     return (
-        <Tab.Navigator
+        <>
+            <StatusBar
+                barStyle="dark-content"
+                backgroundColor="transparent"
+                translucent={true}
+            />
+            <Tab.Navigator
             screenOptions={({ route }) => ({
                 headerShown: false,
                 tabBarActiveTintColor: COLORS.primary,
@@ -101,6 +107,7 @@ export default function MainTabs() {
                 options={{ tabBarLabel: "Profile" }}
             />
         </Tab.Navigator>
+    </>
     );
 }
 

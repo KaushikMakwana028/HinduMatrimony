@@ -25,9 +25,11 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Ionicons } from "@expo/vector-icons";
 import ScreenHeader from "../components/ScreenHeader";
 import KeyboardAwareScrollView from "../components/KeyboardAwareScrollView";
+import { ActiveMembersSkeleton } from "../components/Skeleton";
 import { useAuth } from "../contexts/AuthContext";
 import activeMemberService from "../services/activeMemberService";
 import profileService from "../services/profileService";
+import memberStateService from "../services/memberStateService";
 import { useNavigation } from "@react-navigation/native";
 import {
   subscribeMemberAction,
@@ -78,16 +80,21 @@ function slimSettings(res) {
   return out;
 }
 
-const byName = (a, b) => String(a.name).localeCompare(String(b.name));
+const byName = (a, b) => {
+  const sa = String(a?.name || "");
+  const sb = String(b?.name || "");
+  return sa < sb ? -1 : sa > sb ? 1 : 0;
+};
 
 function groupBy(list, key) {
   const map = {};
-  (list || []).forEach((item) => {
+  if (!Array.isArray(list)) return map;
+  for (let i = 0; i < list.length; i++) {
+    const item = list[i];
     const k = String(item[key]);
     if (!map[k]) map[k] = [];
     map[k].push(item);
-  });
-  Object.keys(map).forEach((k) => map[k].sort(byName));
+  }
   return map;
 }
 
@@ -469,56 +476,6 @@ function extractPaginationData(response) {
 }
 
 /**
- * Safely resolves membership plan (Premium vs Free badge)
- */
-function getMemberPlan(item) {
-  if (!item) return "Free";
-
-  const packageName = String(
-    item.package_name || item.package?.name || item.package || "",
-  )
-    .trim()
-    .toLowerCase();
-
-  if (packageName.includes("free")) {
-    return "Free";
-  }
-  if (
-    packageName.includes("premium") ||
-    packageName.includes("gold") ||
-    packageName.includes("silver") ||
-    packageName.includes("platinum") ||
-    packageName.includes("vip") ||
-    packageName.includes("diamond") ||
-    packageName.includes("pro")
-  ) {
-    return "Premium";
-  }
-
-  // Active Matrimonial CMS: package_id 1 is the default Free Package. Paid packages have id > 1.
-  const packageId = Number(item.package_id || item.current_package_id);
-  if (Number.isFinite(packageId) && packageId > 1) {
-    return "Premium";
-  }
-
-  // membership: 2+ is paid/premium in Active Matrimonial CMS (1 is Free).
-  const membershipNum = Number(item.membership);
-  if (Number.isFinite(membershipNum) && membershipNum >= 2) {
-    return "Premium";
-  }
-
-  if (
-    item.is_premium === true ||
-    item.is_premium === 1 ||
-    item.is_premium === "1"
-  ) {
-    return "Premium";
-  }
-
-  return "Free";
-}
-
-/**
  * Normalizes member item from POST /api/member/member-listing
  */
 function formatLiveMember(item, index) {
@@ -530,7 +487,9 @@ function formatLiveMember(item, index) {
     item.member_id ||
     item.memberId ||
     item.code ||
-    (typeof index === "number" ? index + 1 : Math.random().toString(36).slice(2));
+    (typeof index === "number"
+      ? index + 1
+      : Math.random().toString(36).slice(2));
   const rawName = item.name
     ? String(item.name).trim()
     : `${item.first_name || ""} ${item.last_name || ""}`.trim();
@@ -543,9 +502,7 @@ function formatLiveMember(item, index) {
     "";
   const photoStr = String(rawPhoto).trim();
   const isValidPhoto =
-    photoStr &&
-    photoStr !== "null" &&
-    photoStr !== "undefined";
+    photoStr && photoStr !== "null" && photoStr !== "undefined";
   const finalPhoto = isValidPhoto ? photoStr : DEFAULT_AVATAR;
 
   const rawCity =
@@ -559,7 +516,8 @@ function formatLiveMember(item, index) {
   const rawCountry =
     typeof item.country === "object"
       ? item.country?.name
-      : item.country_name || (typeof item.country === "string" ? item.country : item.country_id);
+      : item.country_name ||
+        (typeof item.country === "string" ? item.country : item.country_id);
 
   const loc =
     [rawCity, rawState, typeof rawCountry === "string" ? rawCountry : ""]
@@ -568,16 +526,20 @@ function formatLiveMember(item, index) {
     item.location ||
     "";
 
+  const resolvedCode = memberStateService.resolveMemberCode(item);
+  const isAccepted = Boolean(id && memberStateService.isInterestAccepted(id));
+
   return {
     id: id,
     userId: id,
     name: name,
-    memberId: String(
-      item.code || item.member_code || item.member_id || `HM-${id}`,
-    ),
+    memberId:
+      resolvedCode ||
+      String(item.code || item.member_code || item.member_id || `HM-${id}`),
     photo: finalPhoto,
     photoUrl: photoStr,
-    plan: getMemberPlan(item),
+    plan: memberStateService.resolvePlan(item),
+    isAccepted,
     onlineStatus: "Active Now",
     verified: true,
     age: item.age || item.birthday || 26,
@@ -792,9 +754,11 @@ export default function ActiveMembersScreen() {
         : [],
       countries: sorted(settings.countries),
       states: filterCountryId
-        ? statesByCountry[String(filterCountryId)] || []
+        ? sorted(statesByCountry[String(filterCountryId)] || [])
         : [],
-      cities: filterStateId ? citiesByState[String(filterStateId)] || [] : [],
+      cities: filterStateId
+        ? sorted(citiesByState[String(filterStateId)] || [])
+        : [],
     };
   }, [
     serverFilterSettings,
@@ -832,6 +796,7 @@ export default function ActiveMembersScreen() {
         );
         if (response && response.result !== false) {
           const parsed = extractPaginationData(response);
+          memberStateService.registerMembers(parsed.rawMembers);
           const formatted = parsed.rawMembers
             .map(formatLiveMember)
             .filter(Boolean);
@@ -1033,23 +998,39 @@ export default function ActiveMembersScreen() {
           const list = Array.isArray(res.data)
             ? res.data
             : res.data?.data || [];
+          memberStateService.syncInterestItems(list, {
+            currentUserId: user?.id,
+          });
           const iMap = {};
+          const currentUid = user?.id ? String(user.id) : null;
           list.forEach((item) => {
-            const id =
-              item.user_id ||
-              item.id ||
-              item.member_id ||
-              item.interested_by;
-            if (id) iMap[String(id)] = true;
+            let targetId = null;
+            if (item.user?.id && String(item.user.id) !== currentUid) {
+              targetId = item.user.id;
+            } else if (
+              item.interested_to &&
+              String(item.interested_to) !== currentUid
+            ) {
+              targetId = item.interested_to;
+            } else if (item.user_id && String(item.user_id) !== currentUid) {
+              targetId = item.user_id;
+            }
+            const rawStatus = String(
+              item.status || item.interest_status || "",
+            ).toLowerCase();
+            const isRejected =
+              rawStatus.includes("reject") ||
+              rawStatus.includes("decline") ||
+              item.status === 2 ||
+              item.interest_status === 2;
+            if (targetId && !isRejected) {
+              iMap[String(targetId)] = true;
+            }
           });
-          setInterestSentMap((prev) => {
-            const merged = { ...prev, ...iMap };
-            AsyncStorage.setItem(
-              SENT_INTERESTS_KEY,
-              JSON.stringify(merged),
-            ).catch(() => {});
-            return merged;
-          });
+          setInterestSentMap(iMap);
+          AsyncStorage.setItem(SENT_INTERESTS_KEY, JSON.stringify(iMap)).catch(
+            () => {},
+          );
         }
       })
       .catch(() => {});
@@ -1057,7 +1038,13 @@ export default function ActiveMembersScreen() {
     return () => {
       isMounted = false;
     };
-  }, [token, SENT_INTERESTS_KEY, SHORTLIST_STORAGE_KEY, applySettings]);
+  }, [
+    token,
+    user?.id,
+    SENT_INTERESTS_KEY,
+    SHORTLIST_STORAGE_KEY,
+    applySettings,
+  ]);
 
   // Pull to refresh handler
   const onRefresh = useCallback(async () => {
@@ -1100,23 +1087,40 @@ export default function ActiveMembersScreen() {
             const list = Array.isArray(res.data)
               ? res.data
               : res.data?.data || [];
+            memberStateService.syncInterestItems(list, {
+              currentUserId: user?.id,
+            });
             const iMap = {};
+            const currentUid = user?.id ? String(user.id) : null;
             list.forEach((item) => {
-              const id =
-                item.user_id ||
-                item.id ||
-                item.member_id ||
-                item.interested_by;
-              if (id) iMap[String(id)] = true;
+              let targetId = null;
+              if (item.user?.id && String(item.user.id) !== currentUid) {
+                targetId = item.user.id;
+              } else if (
+                item.interested_to &&
+                String(item.interested_to) !== currentUid
+              ) {
+                targetId = item.interested_to;
+              } else if (item.user_id && String(item.user_id) !== currentUid) {
+                targetId = item.user_id;
+              }
+              const rawStatus = String(
+                item.status || item.interest_status || "",
+              ).toLowerCase();
+              const isRejected =
+                rawStatus.includes("reject") ||
+                rawStatus.includes("decline") ||
+                item.status === 2 ||
+                item.interest_status === 2;
+              if (targetId && !isRejected) {
+                iMap[String(targetId)] = true;
+              }
             });
-            setInterestSentMap((prev) => {
-              const merged = { ...prev, ...iMap };
-              AsyncStorage.setItem(
-                SENT_INTERESTS_KEY,
-                JSON.stringify(merged),
-              ).catch(() => {});
-              return merged;
-            });
+            setInterestSentMap(iMap);
+            AsyncStorage.setItem(
+              SENT_INTERESTS_KEY,
+              JSON.stringify(iMap),
+            ).catch(() => {});
           }
         }),
         fetchMembersPage(currentPage, appliedFilters, false),
@@ -1167,7 +1171,9 @@ export default function ActiveMembersScreen() {
         const locationStr = String(m.location || "").toLowerCase();
         const careerStr = String(m.career || "").toLowerCase();
         const maritalStr = String(resolvedMarital || "").toLowerCase();
-        const motherTongueStr = String(resolvedMotherTongue || "").toLowerCase();
+        const motherTongueStr = String(
+          resolvedMotherTongue || "",
+        ).toLowerCase();
         const ageStr = String(m.age || "");
 
         const matches =
@@ -1243,9 +1249,16 @@ export default function ActiveMembersScreen() {
   // Search Query change
   const handleSearchChange = (text) => {
     setSearchQuery(text);
-    if (!text && appliedFilters.member_code) {
+    if (
+      !text &&
+      (appliedFilters.member_code ||
+        appliedFilters.name ||
+        appliedFilters.search)
+    ) {
       const nextFilters = { ...appliedFilters };
       delete nextFilters.member_code;
+      delete nextFilters.name;
+      delete nextFilters.search;
       setAppliedFilters(nextFilters);
       fetchMembersPage(1, nextFilters, true);
     }
@@ -1257,23 +1270,37 @@ export default function ActiveMembersScreen() {
     const q = searchQuery.trim();
     if (!q) return;
 
-    // Only query server member_code if it looks like a numeric member ID / code
     const cleanedCode = q.replace(/^hm-?/i, "");
-    if (/^\d{3,}$/.test(cleanedCode)) {
-      const newFilters = { ...appliedFilters, member_code: cleanedCode };
-      setAppliedFilters(newFilters);
-      scrollRef.current?.scrollTo({ y: 0, animated: true });
-      await fetchMembersPage(1, newFilters, true);
+    const newFilters = { ...appliedFilters };
+
+    if (/^\d+$/.test(cleanedCode)) {
+      newFilters.member_code = cleanedCode;
+      delete newFilters.name;
+      delete newFilters.search;
+    } else {
+      delete newFilters.member_code;
+      newFilters.name = q;
+      newFilters.search = q;
     }
+
+    setAppliedFilters(newFilters);
+    scrollRef.current?.scrollTo({ y: 0, animated: true });
+    await fetchMembersPage(1, newFilters, true);
   };
 
   // Clear search
   const handleClearSearch = async () => {
     Keyboard.dismiss();
     setSearchQuery("");
-    if (appliedFilters.member_code) {
+    if (
+      appliedFilters.member_code ||
+      appliedFilters.name ||
+      appliedFilters.search
+    ) {
       const nextFilters = { ...appliedFilters };
       delete nextFilters.member_code;
+      delete nextFilters.name;
+      delete nextFilters.search;
       setAppliedFilters(nextFilters);
       scrollRef.current?.scrollTo({ y: 0, animated: true });
       await fetchMembersPage(1, nextFilters, true);
@@ -1399,9 +1426,28 @@ export default function ActiveMembersScreen() {
 
   // Handle Express Interest (POST /api/member/express-interest)
   const handleSendInterest = async (member) => {
+    const memberUid = member.id || member.userId || member.memberId;
+    const isAccepted = Boolean(
+      memberUid && memberStateService.isInterestAccepted(memberUid),
+    );
+    if (isAccepted) {
+      Alert.alert(
+        "Connection Accepted 💖",
+        `You and ${member.name} are already connected! Would you like to view their full profile?`,
+        [
+          { text: "Close", style: "cancel" },
+          {
+            text: "View Profile",
+            onPress: () => handleViewFullProfile(member),
+          },
+        ],
+      );
+      return;
+    }
+
     const isSent = Boolean(
       interestSentMap[String(member.id)] ||
-        interestSentMap[String(member.userId)],
+      interestSentMap[String(member.userId)],
     );
     if (isSent) {
       Alert.alert(
@@ -1417,14 +1463,26 @@ export default function ActiveMembersScreen() {
                 const next = { ...prev };
                 delete next[String(member.id)];
                 delete next[String(member.userId)];
-                AsyncStorage.setItem(SENT_INTERESTS_KEY, JSON.stringify(next)).catch(() => {});
+                AsyncStorage.setItem(
+                  SENT_INTERESTS_KEY,
+                  JSON.stringify(next),
+                ).catch(() => {});
                 return next;
               });
-              emitMemberAction({ userId: member.id, type: "interest", value: false });
-              Alert.alert("Interest Removed", `Your interest in ${member.name} has been removed.`);
+              memberStateService.setInterestStatus(member.id, null);
+              memberStateService.setInterestSent(member.id, false);
+              emitMemberAction({
+                userId: member.id,
+                type: "interest",
+                value: false,
+              });
+              Alert.alert(
+                "Interest Removed",
+                `Your interest in ${member.name} has been removed.`,
+              );
             },
           },
-        ]
+        ],
       );
       return;
     }
@@ -1440,12 +1498,12 @@ export default function ActiveMembersScreen() {
           [String(member.id)]: true,
           [String(member.userId)]: true,
         };
-        AsyncStorage.setItem(
-          SENT_INTERESTS_KEY,
-          JSON.stringify(next),
-        ).catch(() => {});
+        AsyncStorage.setItem(SENT_INTERESTS_KEY, JSON.stringify(next)).catch(
+          () => {},
+        );
         return next;
       });
+      memberStateService.setInterestSent(member.id, true);
       emitMemberAction({ userId: member.id, type: "interest", value: true });
       Alert.alert(
         "Interest Expressed! 💖",
@@ -1480,8 +1538,7 @@ export default function ActiveMembersScreen() {
   // Handle Shortlist (POST /api/member/add-to-shortlist & /remove-from-shortlist)
   const handleToggleShortlist = async (member) => {
     const isShortlisted = Boolean(
-      shortlistMap[String(member.id)] ||
-        shortlistMap[String(member.userId)],
+      shortlistMap[String(member.id)] || shortlistMap[String(member.userId)],
     );
 
     try {
@@ -1502,7 +1559,11 @@ export default function ActiveMembersScreen() {
           ).catch(() => {});
           return next;
         });
-        emitMemberAction({ userId: member.id, type: "shortlist", value: false });
+        emitMemberAction({
+          userId: member.id,
+          type: "shortlist",
+          value: false,
+        });
         Alert.alert(
           "Shortlist Updated",
           res?.message || "Removed from shortlist.",
@@ -1594,24 +1655,49 @@ export default function ActiveMembersScreen() {
 
   // Open the separate Member Profile screen (it fetches live data by id)
   const handleViewFullProfile = (member) => {
-    const isSent = Boolean(
-      interestSentMap[String(member.id)] ||
-        interestSentMap[String(member.userId)],
+    const interestStatus = memberStateService.getInterestStatus(
+      member.id || member.userId || member.memberId,
     );
+    const isAccepted = interestStatus === "Accepted";
+    const isRejected = interestStatus === "Rejected";
+    const isSent =
+      !isRejected &&
+      (isAccepted ||
+        Boolean(
+          interestSentMap[String(member.id)] ||
+          interestSentMap[String(member.userId)] ||
+          memberStateService.isInterestSent(
+            member.id || member.userId || member.memberId,
+          ),
+        ));
     const isShortlisted = Boolean(
-      shortlistMap[String(member.id)] ||
-        shortlistMap[String(member.userId)],
+      shortlistMap[String(member.id)] || shortlistMap[String(member.userId)],
     );
 
     navigation.navigate("MemberProfile", {
       userId: member.id,
+      interestStatus: isAccepted
+        ? "Accepted"
+        : isRejected
+          ? "Rejected"
+          : isSent
+            ? "Pending"
+            : null,
       member: {
+        id: member.id,
         name: member.name,
         memberId: member.memberId,
         photo: member.photo,
         age: member.age,
         plan: member.plan,
         interestSent: isSent,
+        interestStatus: isAccepted
+          ? "Accepted"
+          : isRejected
+            ? "Rejected"
+            : isSent
+              ? "Pending"
+              : null,
         shortlisted: isShortlisted,
         summary: {
           height: member.height,
@@ -1638,12 +1724,13 @@ export default function ActiveMembersScreen() {
       if (type === "interest") {
         setInterestSentMap((prev) => {
           const next = { ...prev, [uid]: value };
-          AsyncStorage.setItem(
-            SENT_INTERESTS_KEY,
-            JSON.stringify(next),
-          ).catch(() => {});
+          AsyncStorage.setItem(SENT_INTERESTS_KEY, JSON.stringify(next)).catch(
+            () => {},
+          );
           return next;
         });
+      } else if (type === "interest_status") {
+        setInterestSentMap((prev) => ({ ...prev }));
       } else if (type === "shortlist") {
         setShortlistMap((prev) => {
           const next = { ...prev, [uid]: value };
@@ -1660,12 +1747,16 @@ export default function ActiveMembersScreen() {
   }, [SENT_INTERESTS_KEY, SHORTLIST_STORAGE_KEY]);
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={["top", "left", "right"]}>
+    <SafeAreaView style={styles.safeArea} edges={["left", "right"]}>
       {/* ---------- STICKY APP HEADER ---------- */}
       <ScreenHeader
         title="Active Members"
         subtitle={`Showing verified ${targetOppositeGender || "member"} profiles`}
-        badge={filteredMembers.length > 0 ? `${filteredMembers.length} Active` : "Active Now"}
+        badge={
+          filteredMembers.length > 0
+            ? `${filteredMembers.length} Active`
+            : "Active Now"
+        }
         badgeIcon="radio-button-on"
         badgeColor="#15803D"
         badgeBgColor="#DCFCE7"
@@ -1749,9 +1840,11 @@ export default function ActiveMembersScreen() {
               color={COLORS.primary}
             />
             <Text style={styles.matchTagText}>
-              {searchQuery.trim()
-                ? `${filteredMembers.length} Found`
-                : `${targetOppositeGender} Matches (${totalItems || filteredMembers.length})`}
+              {loading && members.length === 0
+                ? `Loading ${targetOppositeGender} Matches...`
+                : searchQuery.trim()
+                  ? `${filteredMembers.length} Found`
+                  : `${targetOppositeGender} Matches (${totalItems || filteredMembers.length})`}
             </Text>
           </View>
 
@@ -1836,12 +1929,9 @@ export default function ActiveMembersScreen() {
           </View>
         )}
 
-        {/* Loading Indicator */}
+        {/* Skeleton Loading State */}
         {loading && members.length === 0 ? (
-          <View style={styles.loadingContainer}>
-            <ActivityIndicator size="large" color={COLORS.primary} />
-            <Text style={styles.loadingText}>Fetching active members...</Text>
-          </View>
+          <ActiveMembersSkeleton count={3} />
         ) : filteredMembers.length === 0 &&
           !fetchError &&
           !emailUnverified &&
@@ -1901,13 +1991,24 @@ export default function ActiveMembersScreen() {
             const memberKey = String(
               m?.id ?? m?.userId ?? m?.memberId ?? `member_${index}`,
             );
-            const isSent = Boolean(
-              interestSentMap[String(m?.id || memberKey)] ||
-                interestSentMap[String(m?.userId || memberKey)],
-            );
+            const memberUid = m?.id || m?.userId || m?.memberId;
+            const interestStatus = memberUid
+              ? memberStateService.getInterestStatus(memberUid)
+              : null;
+            const isAccepted = interestStatus === "Accepted";
+            const isRejected = interestStatus === "Rejected";
+            const isSent =
+              !isRejected &&
+              (isAccepted ||
+                Boolean(
+                  (m?.id && interestSentMap[String(m.id)]) ||
+                  (m?.userId && interestSentMap[String(m.userId)]) ||
+                  (memberUid && memberStateService.isInterestSent(memberUid)),
+                ));
             const isShortlisted = Boolean(
-              shortlistMap[String(m?.id || memberKey)] ||
-                shortlistMap[String(m?.userId || memberKey)],
+              (m?.id && shortlistMap[String(m.id)]) ||
+              (m?.userId && shortlistMap[String(m.userId)]) ||
+              (memberUid && memberStateService.isShortlisted(memberUid)),
             );
 
             const displayReligion = resolveName(
@@ -1929,9 +2030,7 @@ export default function ActiveMembersScreen() {
             );
             const displayLocation =
               m.location ||
-              [m.city, m.state, displayCountry]
-                .filter(Boolean)
-                .join(", ") ||
+              [m.city, m.state, displayCountry].filter(Boolean).join(", ") ||
               displayCountry;
 
             return (
@@ -2084,32 +2183,48 @@ export default function ActiveMembersScreen() {
                   <View style={styles.cardActionGrid}>
                     {/* Row 1: Primary Actions */}
                     <View style={styles.actionRow}>
-                      {/* 1. Send Interest / Interest Sent */}
+                      {/* 1. Send Interest / Interest Sent / Accepted */}
                       <TouchableOpacity
                         style={[
                           styles.primaryActionBtn,
-                          isSent
-                            ? styles.interestBtnSent
-                            : styles.interestBtnActive,
+                          isAccepted
+                            ? styles.interestBtnAccepted
+                            : isSent
+                              ? styles.interestBtnSent
+                              : styles.interestBtnActive,
                         ]}
                         onPress={() => handleSendInterest(m)}
                         activeOpacity={0.8}
                       >
                         <Ionicons
-                          name={isSent ? "checkmark-circle" : "heart"}
+                          name={
+                            isAccepted
+                              ? "checkmark-done"
+                              : isSent
+                                ? "checkmark-circle"
+                                : "heart"
+                          }
                           size={16}
-                          color={isSent ? "#065F46" : "#fff"}
+                          color={
+                            isAccepted ? "#15803D" : isSent ? "#065F46" : "#fff"
+                          }
                           style={styles.btnIcon}
                         />
                         <Text
                           style={[
                             styles.btnText,
-                            isSent
-                              ? styles.interestTextSent
-                              : styles.interestTextActive,
+                            isAccepted
+                              ? styles.interestTextAccepted
+                              : isSent
+                                ? styles.interestTextSent
+                                : styles.interestTextActive,
                           ]}
                         >
-                          {isSent ? "Interest Sent" : "Send Interest"}
+                          {isAccepted
+                            ? "Accepted"
+                            : isSent
+                              ? "Interest Sent"
+                              : "Send Interest"}
                         </Text>
                       </TouchableOpacity>
 
@@ -2186,7 +2301,8 @@ export default function ActiveMembersScreen() {
 
         {/* ---------- RESPONSIVE PAGINATION CONTROLS (SERVER-SIDE) ---------- */}
         {!loading &&
-          (totalPages > 1 || totalItems > filteredMembers.length) && (
+          !searchQuery.trim() &&
+          totalPages > 1 && (
             <View style={styles.paginationCard}>
               {/* Page info subtitle */}
               <Text style={styles.paginationInfoText}>
@@ -2340,7 +2456,7 @@ export default function ActiveMembersScreen() {
               <View>
                 <Text style={styles.modalTitle}>Active Member Filter</Text>
                 <Text style={styles.modalSubtitle}>
-                  Filter matches directly via Hindumatrimony API
+                  Search Verified Matches
                 </Text>
               </View>
               <TouchableOpacity
@@ -2677,9 +2793,7 @@ export default function ActiveMembersScreen() {
                 {syncingFilter ? (
                   <ActivityIndicator size="small" color="#fff" />
                 ) : (
-                  <Text style={styles.modalApplyBtnText}>
-                    Apply API Filters
-                  </Text>
+                  <Text style={styles.modalApplyBtnText}>Apply Filters</Text>
                 )}
               </TouchableOpacity>
             </View>
@@ -3340,11 +3454,19 @@ const styles = StyleSheet.create({
     backgroundColor: "#F0FDF4",
     borderColor: "#BBF7D0",
   },
+  interestBtnAccepted: {
+    backgroundColor: "#DCFCE7",
+    borderColor: "#86EFAC",
+  },
   interestTextActive: {
     color: "#fff",
   },
   interestTextSent: {
     color: "#15803D",
+  },
+  interestTextAccepted: {
+    color: "#15803D",
+    fontFamily: FONTS.bold,
   },
   viewProfileBtn: {
     backgroundColor: "#fff",

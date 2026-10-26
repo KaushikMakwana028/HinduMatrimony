@@ -22,9 +22,11 @@ import { useNavigation } from "@react-navigation/native";
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import ScreenHeader from "../components/ScreenHeader";
+import { ListFeedSkeleton } from "../components/Skeleton";
 import { useAuth } from "../contexts/AuthContext";
 import interestService from "../services/interestService";
 import homeService from "../services/homeService";
+import memberStateService from "../services/memberStateService";
 import {
   subscribeMemberAction,
   emitMemberAction,
@@ -64,121 +66,38 @@ function getPaginationRange(currentPage, totalPages) {
 }
 
 /**
- * Resolves membership plan (Premium vs Free badge)
+ * Formats a raw created_at / date value into e.g. "12 Oct 2026" (UI only)
  */
-function getMemberPlan(item) {
-  if (!item) return "Free";
-
-  let userObj = item.user;
-  if (typeof userObj === "string") {
-    try {
-      userObj = JSON.parse(userObj);
-    } catch {}
+function formatInterestDate(value) {
+  if (!value) return "";
+  try {
+    const d = new Date(String(value).replace(" ", "T"));
+    if (isNaN(d.getTime())) return "";
+    return d.toLocaleDateString("en-IN", {
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+    });
+  } catch {
+    return "";
   }
-  if (!userObj || typeof userObj !== "object") userObj = null;
+}
 
-  // 1. Textual package names check
-  const candidates = [
-    item.package_name,
-    userObj?.package_name,
-    item.package?.name,
-    userObj?.package?.name,
-    item.current_package_name,
-    userObj?.current_package_name,
-    item.current_package_info?.package_name,
-    userObj?.current_package_info?.package_name,
-    item.package_info?.package_name,
-    userObj?.package_info?.package_name,
-    item.member_plan,
-    userObj?.member_plan,
-    item.plan,
-    userObj?.plan,
-    typeof item.package === "string" ? item.package : "",
-    typeof userObj?.package === "string" ? userObj?.package : "",
-  ];
-
-  for (const c of candidates) {
-    if (!c) continue;
-    const str = String(c).trim().toLowerCase();
-    if (
-      str.includes("premium") ||
-      str.includes("gold") ||
-      str.includes("silver") ||
-      str.includes("platinum") ||
-      str.includes("vip") ||
-      str.includes("diamond") ||
-      str.includes("pro") ||
-      str.includes("paid")
-    ) {
-      return "Premium";
-    }
-  }
-
-  // 2. Numeric package_id (> 1 means paid/premium package in Active Matrimonial CMS)
-  const pkgIds = [
-    item.package_id,
-    userObj?.package_id,
-    item.current_package_id,
-    userObj?.current_package_id,
-    item.package?.id,
-    userObj?.package?.id,
-  ];
-  for (const pid of pkgIds) {
-    const num = Number(pid);
-    if (Number.isFinite(num) && num > 1) {
-      return "Premium";
-    }
-  }
-
-  // 3. Membership status (>= 2 is paid/premium in Active Matrimonial CMS)
-  const memVals = [
-    item.membership,
-    userObj?.membership,
-    item.membership_type,
-    userObj?.membership_type,
-    item.member_type,
-    userObj?.member_type,
-  ];
-  for (const m of memVals) {
-    const num = Number(m);
-    if (Number.isFinite(num) && num >= 2) {
-      return "Premium";
-    }
-    if (typeof m === "string") {
-      const lower = m.toLowerCase();
-      if (
-        lower.includes("paid") ||
-        lower.includes("premium") ||
-        lower.includes("silver") ||
-        lower.includes("gold") ||
-        lower.includes("platinum")
-      ) {
-        return "Premium";
-      }
-    }
-  }
-
-  // 4. Boolean or flag checks
-  if (
-    item.is_premium === true ||
-    item.is_premium === 1 ||
-    item.is_premium === "1" ||
-    userObj?.is_premium === true ||
-    userObj?.is_premium === 1 ||
-    userObj?.is_premium === "1"
-  ) {
-    return "Premium";
-  }
-
-  // 5. Contact view quota check
-  const contactLimit = Number(
-    item.contact_view_limit ?? userObj?.contact_view_limit,
+/**
+ * Small icon + text info row used inside the card (UI only)
+ */
+function InfoLine({ icon, text }) {
+  if (!text) return null;
+  return (
+    <View style={styles.infoLine}>
+      <View style={styles.infoLineIcon}>
+        <Ionicons name={icon} size={12} color={COLORS.primary} />
+      </View>
+      <Text style={styles.infoLineText} numberOfLines={1}>
+        {text}
+      </Text>
+    </View>
   );
-  if (Number.isFinite(contactLimit) && contactLimit > 0) {
-    return "Premium";
-  }
-
-  return "Free";
 }
 
 /**
@@ -200,23 +119,30 @@ function formatInterestItem(item, index) {
     (userObj && item.id !== userObj.id ? item.id : null) ||
     item.id;
 
-  // Extract digits from member code if available (e.g. "HM-7468" -> 7468)
-  const codeStr = String(
-    item.code ||
-      userObj?.code ||
-      item.member_code ||
-      userObj?.member_code ||
-      "",
-  ).trim();
-  const digitsFromCode = codeStr ? parseInt(codeStr.replace(/\D/g, ""), 10) : null;
-  const validCodeId = Number.isFinite(digitsFromCode) && digitsFromCode > 0 ? digitsFromCode : null;
+  const resolvedCode = memberStateService.resolveMemberCode(item);
+  const codeStr =
+    resolvedCode ||
+    String(
+      item.code ||
+        userObj?.code ||
+        item.member_code ||
+        userObj?.member_code ||
+        "",
+    ).trim();
+  const digitsFromCode = codeStr
+    ? parseInt(codeStr.replace(/\D/g, ""), 10)
+    : null;
+  const validCodeId =
+    Number.isFinite(digitsFromCode) && digitsFromCode > 0
+      ? digitsFromCode
+      : null;
 
   const targetUserId =
-    validCodeId ||
     userObj?.id ||
     item.user_id ||
     item.interested_by ||
     item.interested_to ||
+    validCodeId ||
     item.id ||
     index + 1;
 
@@ -224,9 +150,7 @@ function formatInterestItem(item, index) {
     item.name ||
     userObj?.name ||
     `${item.first_name || userObj?.first_name || ""} ${item.last_name || userObj?.last_name || ""}`.trim();
-  const name =
-    rawName ||
-    `Member ${codeStr || targetUserId}`;
+  const name = rawName || `Member ${codeStr || targetUserId}`;
 
   const rawPhoto =
     item.photo ||
@@ -239,9 +163,7 @@ function formatInterestItem(item, index) {
     "";
   const photoStr = String(rawPhoto).trim();
   const isValidPhoto =
-    photoStr &&
-    photoStr !== "null" &&
-    photoStr !== "undefined";
+    photoStr && photoStr !== "null" && photoStr !== "undefined";
   const finalPhoto = isValidPhoto ? photoStr : DEFAULT_AVATAR;
 
   const rawCity =
@@ -277,48 +199,58 @@ function formatInterestItem(item, index) {
     .toLowerCase()
     .trim();
 
+  // Check Rejection FIRST!
   if (
-    rawStatus.includes("accept") ||
-    rawStatus.includes("approv") || // matches "approved", "approve", "approval"
-    rawStatus === "1" ||
-    item.status === 1 ||
-    item.status === true ||
-    item.interest_status === 1 ||
-    item.interest_status === "1"
-  ) {
-    statusStr = "Accepted";
-  } else if (
     rawStatus.includes("reject") ||
     rawStatus.includes("decline") ||
     rawStatus.includes("cancel") ||
     rawStatus === "2" ||
     item.status === 2 ||
     item.interest_status === 2 ||
-    item.interest_status === "2"
+    item.interest_status === "2" ||
+    memberStateService.getInterestStatus(targetUserId) === "Rejected" ||
+    memberStateService.getInterestStatus(codeStr) === "Rejected"
   ) {
     statusStr = "Rejected";
+  } else if (
+    rawStatus.includes("accept") ||
+    rawStatus.includes("approv") || // matches "approved", "approve", "approval"
+    rawStatus === "1" ||
+    item.status === 1 ||
+    item.status === true ||
+    item.interest_status === 1 ||
+    item.interest_status === "1" ||
+    memberStateService.getInterestStatus(targetUserId) === "Accepted" ||
+    memberStateService.getInterestStatus(codeStr) === "Accepted"
+  ) {
+    statusStr = "Accepted";
   }
+
+  const finalMemberId =
+    resolvedCode ||
+    String(
+      item.code ||
+        userObj?.code ||
+        item.member_code ||
+        userObj?.member_code ||
+        `HM-${targetUserId}`,
+    );
 
   return {
     id: expressInterestId || item.id || targetUserId,
     interestId: expressInterestId || item.id || targetUserId,
     userId: targetUserId,
     name: name,
-    memberId: String(
-      item.code ||
-        userObj?.code ||
-        item.member_code ||
-        userObj?.member_code ||
-        `HM-${targetUserId}`,
-    ),
+    memberId: finalMemberId,
     photo: finalPhoto,
-    plan: getMemberPlan(item),
+    plan: memberStateService.resolvePlan(item),
     age: item.age || userObj?.age || item.birthday || "",
-    height: item.height || userObj?.height
-      ? String(item.height || userObj?.height).includes("ft")
-        ? item.height || userObj?.height
-        : `${item.height || userObj?.height} ft`
-      : "",
+    height:
+      item.height || userObj?.height
+        ? String(item.height || userObj?.height).includes("ft")
+          ? item.height || userObj?.height
+          : `${item.height || userObj?.height} ft`
+        : "",
     religion:
       item.religion ||
       userObj?.religion ||
@@ -425,6 +357,7 @@ export default function MyInterestScreen() {
             : Array.isArray(res.data?.data)
               ? res.data.data
               : [];
+          memberStateService.syncInterestItems(rawList);
           let formatted = rawList.map(formatInterestItem).filter(Boolean);
 
           if (tab === "received") {
@@ -483,8 +416,9 @@ export default function MyInterestScreen() {
     if (!token) return;
 
     (async () => {
-      fetchDashboardStats();
+      await memberStateService.init(token);
       if (isMounted) {
+        fetchDashboardStats();
         await fetchInterests(activeTab, 1, false);
       }
     })();
@@ -533,7 +467,7 @@ export default function MyInterestScreen() {
   // Cross-screen sync (when interest is sent or accepted/rejected elsewhere)
   useEffect(() => {
     return subscribeMemberAction(({ type }) => {
-      if (type === "interest") {
+      if (type === "interest" || type === "interest_status") {
         fetchInterests(activeTab, currentPage, true);
         fetchDashboardStats();
       }
@@ -565,6 +499,8 @@ export default function MyInterestScreen() {
         ),
       );
 
+      memberStateService.setInterestStatus(item.userId, "Accepted");
+      memberStateService.setInterestSent(item.userId, true);
       emitMemberAction({
         userId: item.userId,
         type: "interest_status",
@@ -630,18 +566,41 @@ export default function MyInterestScreen() {
                 ),
               );
 
+              memberStateService.setInterestStatus(item.userId, "Rejected");
+              memberStateService.setInterestSent(item.userId, false);
               emitMemberAction({
                 userId: item.userId,
                 type: "interest_status",
                 status: "Rejected",
               });
+              emitMemberAction({
+                userId: item.userId,
+                type: "interest",
+                value: false,
+              });
+
+              if (user?.id) {
+                const sKey = `@hm_sent_interests_${user.id}`;
+                try {
+                  const rawS = await AsyncStorage.getItem(sKey);
+                  if (rawS) {
+                    const sMap = JSON.parse(rawS) || {};
+                    delete sMap[String(item.userId)];
+                    delete sMap[String(item.id)];
+                    await AsyncStorage.setItem(sKey, JSON.stringify(sMap));
+                  }
+                } catch {}
+              }
 
               Alert.alert(
                 "Interest Declined",
                 res?.message || `You have declined interest from ${item.name}.`,
               );
             } catch (err) {
-              Alert.alert("Notice", err.message || "Failed to reject interest.");
+              Alert.alert(
+                "Notice",
+                err.message || "Failed to reject interest.",
+              );
             } finally {
               setActionInProgress((prev) => ({ ...prev, [interestId]: null }));
             }
@@ -729,6 +688,8 @@ export default function MyInterestScreen() {
               }
 
               // Broadcast update to ActiveMembers, Shortlist, MemberProfile
+              memberStateService.setInterestStatus(item.userId, null);
+              memberStateService.setInterestSent(item.userId, false);
               emitMemberAction({
                 userId: item.userId,
                 type: "interest",
@@ -740,7 +701,10 @@ export default function MyInterestScreen() {
                 `Your interest in ${item.name} has been successfully removed.`,
               );
             } catch (err) {
-              Alert.alert("Notice", err.message || "Failed to remove interest.");
+              Alert.alert(
+                "Notice",
+                err.message || "Failed to remove interest.",
+              );
             } finally {
               setActionInProgress((prev) => ({ ...prev, [interestId]: null }));
             }
@@ -808,6 +772,19 @@ export default function MyInterestScreen() {
     });
   }, [currentList, searchQuery]);
 
+  // Status counts for the summary tiles (UI only)
+  const statusCounts = useMemo(() => {
+    let pending = 0;
+    let accepted = 0;
+    let declined = 0;
+    currentList.forEach((m) => {
+      if (m.status === "Accepted") accepted += 1;
+      else if (m.status === "Rejected") declined += 1;
+      else pending += 1;
+    });
+    return { pending, accepted, declined };
+  }, [currentList]);
+
   // Derived user package & remaining interests status
   const packageInfo = dashboardData?.current_package_info;
   const isPremiumUser =
@@ -827,8 +804,85 @@ export default function MyInterestScreen() {
     const isAccepted = item.status === "Accepted";
     const isRejected = item.status === "Rejected";
 
+    const accentColor = isAccepted
+      ? "#10B981"
+      : isRejected
+        ? "#EF4444"
+        : "#F59E0B";
+    const dateLabel = formatInterestDate(item.date);
+    const viewLabel =
+      activeTab === "received" && isPending ? "Profile" : "View Profile";
+    const religionLine = item.religion
+      ? `${item.religion}${item.caste ? ` • ${item.caste}` : ""}`
+      : "";
+
     return (
-      <View style={styles.card}>
+      <View style={[styles.card, { borderLeftColor: accentColor }]}>
+        {/* Card header: direction + date, and status pill */}
+        <View style={styles.cardHeaderRow}>
+          <View style={styles.cardHeaderLeft}>
+            <Ionicons
+              name={
+                activeTab === "received"
+                  ? "arrow-down-circle-outline"
+                  : "arrow-up-circle-outline"
+              }
+              size={14}
+              color={COLORS.textLight}
+              style={{ marginRight: 5 }}
+            />
+            <Text style={styles.cardHeaderText} numberOfLines={1}>
+              {activeTab === "received" ? "Received" : "Sent"}
+              {dateLabel ? ` · ${dateLabel}` : ""}
+            </Text>
+          </View>
+
+          {/* Status Pill */}
+          <View
+            style={[
+              styles.statusPill,
+              isAccepted
+                ? styles.statusPillAccepted
+                : isRejected
+                  ? styles.statusPillRejected
+                  : styles.statusPillPending,
+            ]}
+          >
+            <Ionicons
+              name={
+                isAccepted
+                  ? "checkmark-circle"
+                  : isRejected
+                    ? "close-circle"
+                    : "time"
+              }
+              size={12}
+              color={
+                isAccepted ? "#15803D" : isRejected ? "#B91C1C" : "#B45309"
+              }
+              style={{ marginRight: 4 }}
+            />
+            <Text
+              style={[
+                styles.statusPillText,
+                isAccepted
+                  ? styles.statusTextAccepted
+                  : isRejected
+                    ? styles.statusTextRejected
+                    : styles.statusTextPending,
+              ]}
+            >
+              {isAccepted
+                ? "Accepted"
+                : isRejected
+                  ? "Declined"
+                  : activeTab === "received"
+                    ? "New Request"
+                    : "Pending"}
+            </Text>
+          </View>
+        </View>
+
         {/* Top Info Section: Photo + Core Details */}
         <TouchableOpacity
           activeOpacity={0.85}
@@ -854,7 +908,7 @@ export default function MyInterestScreen() {
                 name={item.plan === "Premium" ? "ribbon" : "sparkles"}
                 size={9}
                 color="#fff"
-                style={{ marginRight: 2 }}
+                style={{ marginRight: 3 }}
               />
               <Text style={styles.planBadgeText}>{item.plan}</Text>
             </View>
@@ -862,141 +916,87 @@ export default function MyInterestScreen() {
 
           {/* Core Info Column */}
           <View style={styles.cardInfoCol}>
-            {/* Name, Age & Status badge */}
-            <View style={styles.nameHeaderRow}>
-              <View style={{ flex: 1, marginRight: 8 }}>
-                <Text style={styles.cardName} numberOfLines={1}>
-                  {item.name}
-                  {item.age ? (
-                    <Text style={styles.cardAge}>, {item.age} yrs</Text>
-                  ) : null}
-                </Text>
-                <View style={styles.idBadgeRow}>
-                  <Text style={styles.idBadgeText}>{item.memberId}</Text>
-                </View>
-              </View>
+            <Text style={styles.cardName} numberOfLines={1}>
+              {item.name}
+              {item.age ? (
+                <Text style={styles.cardAge}>, {item.age} yrs</Text>
+              ) : null}
+            </Text>
 
-              {/* Status Pill */}
-              <View
-                style={[
-                  styles.statusPill,
-                  isAccepted
-                    ? styles.statusPillAccepted
-                    : isRejected
-                      ? styles.statusPillRejected
-                      : styles.statusPillPending,
-                ]}
-              >
-                <Ionicons
-                  name={
-                    isAccepted
-                      ? "checkmark-circle"
-                      : isRejected
-                        ? "close-circle"
-                        : "time"
-                  }
-                  size={11}
-                  color={
-                    isAccepted
-                      ? "#15803D"
-                      : isRejected
-                        ? "#B91C1C"
-                        : "#B45309"
-                  }
-                  style={{ marginRight: 3 }}
-                />
-                <Text
-                  style={[
-                    styles.statusPillText,
-                    isAccepted
-                      ? styles.statusTextAccepted
-                      : isRejected
-                        ? styles.statusTextRejected
-                        : styles.statusTextPending,
-                  ]}
-                >
-                  {isAccepted
-                    ? "Accepted"
-                    : isRejected
-                      ? "Declined"
-                      : activeTab === "received"
-                        ? "New Request"
-                        : "Pending"}
-                </Text>
-              </View>
+            <View style={styles.idBadgeRow}>
+              <Ionicons name="finger-print" size={10} color="#64748B" />
+              <Text style={styles.idBadgeText}>{item.memberId}</Text>
             </View>
 
-            {/* Attribute Chips */}
-            <View style={styles.chipsRow}>
-              {item.height ? (
-                <View style={styles.chip}>
-                  <Ionicons
-                    name="resize-outline"
-                    size={11}
-                    color={COLORS.primary}
-                  />
-                  <Text style={styles.chipText}>{item.height}</Text>
-                </View>
-              ) : null}
+            {/* Compact quick facts */}
+            {item.height || item.maritalStatus ? (
+              <View style={styles.chipsRow}>
+                {item.height ? (
+                  <View style={styles.chip}>
+                    <Ionicons
+                      name="resize-outline"
+                      size={11}
+                      color={COLORS.primary}
+                    />
+                    <Text style={styles.chipText}>{item.height}</Text>
+                  </View>
+                ) : null}
 
-              {item.religion ? (
-                <View style={styles.chip}>
-                  <Ionicons
-                    name="flower-outline"
-                    size={11}
-                    color={COLORS.primary}
-                  />
-                  <Text style={styles.chipText} numberOfLines={1}>
-                    {item.religion}
-                    {item.caste ? ` • ${item.caste}` : ""}
-                  </Text>
-                </View>
-              ) : null}
+                {item.maritalStatus ? (
+                  <View style={styles.chip}>
+                    <Ionicons
+                      name="heart-outline"
+                      size={11}
+                      color={COLORS.primary}
+                    />
+                    <Text style={styles.chipText} numberOfLines={1}>
+                      {item.maritalStatus}
+                    </Text>
+                  </View>
+                ) : null}
+              </View>
+            ) : null}
 
-              {item.maritalStatus ? (
-                <View style={styles.chip}>
-                  <Ionicons
-                    name="heart-outline"
-                    size={11}
-                    color={COLORS.primary}
-                  />
-                  <Text style={styles.chipText} numberOfLines={1}>
-                    {item.maritalStatus}
-                  </Text>
-                </View>
-              ) : null}
-
-              {item.location ? (
-                <View style={styles.chip}>
-                  <Ionicons
-                    name="location-outline"
-                    size={11}
-                    color={COLORS.primary}
-                  />
-                  <Text style={styles.chipText} numberOfLines={1}>
-                    {item.location}
-                  </Text>
-                </View>
-              ) : null}
-
-              {item.profession ? (
-                <View style={styles.chip}>
-                  <Ionicons
-                    name="briefcase-outline"
-                    size={11}
-                    color={COLORS.primary}
-                  />
-                  <Text style={styles.chipText} numberOfLines={1}>
-                    {item.profession}
-                  </Text>
-                </View>
-              ) : null}
+            {/* Detail lines */}
+            <View style={styles.infoLines}>
+              <InfoLine icon="flower-outline" text={religionLine} />
+              <InfoLine icon="location-outline" text={item.location} />
+              <InfoLine icon="briefcase-outline" text={item.profession} />
             </View>
           </View>
         </TouchableOpacity>
 
-        {/* Divider */}
-        <View style={styles.cardDivider} />
+        {/* Status note */}
+        {isAccepted ? (
+          <View style={[styles.noteBox, styles.noteBoxAccepted]}>
+            <Ionicons
+              name="lock-open-outline"
+              size={14}
+              color="#15803D"
+              style={{ marginRight: 7 }}
+            />
+            <Text style={[styles.noteText, { color: "#166534" }]}>
+              {activeTab === "received"
+                ? "You accepted this request. Full contact details are unlocked."
+                : "Great news! They accepted your interest. Contact details are unlocked."}
+            </Text>
+          </View>
+        ) : null}
+        {isRejected ? (
+          <View style={[styles.noteBox, styles.noteBoxRejected]}>
+            <Ionicons
+              name="information-circle-outline"
+              size={14}
+              color="#B91C1C"
+              style={{ marginRight: 7 }}
+            />
+            <Text style={[styles.noteText, { color: "#991B1B" }]}>
+              {activeTab === "received"
+                ? "You declined this request."
+                : "This interest was declined."}
+            </Text>
+          </View>
+        ) : null}
 
         {/* Action Buttons Row */}
         <View style={styles.actionsGrid}>
@@ -1017,9 +1017,9 @@ export default function MyInterestScreen() {
                       <>
                         <Ionicons
                           name="checkmark-circle"
-                          size={15}
+                          size={16}
                           color="#fff"
-                          style={{ marginRight: 6 }}
+                          style={{ marginRight: 5 }}
                         />
                         <Text style={styles.acceptBtnText}>Accept</Text>
                       </>
@@ -1038,9 +1038,9 @@ export default function MyInterestScreen() {
                       <>
                         <Ionicons
                           name="close-circle-outline"
-                          size={15}
+                          size={16}
                           color="#DC2626"
-                          style={{ marginRight: 6 }}
+                          style={{ marginRight: 5 }}
                         />
                         <Text style={styles.rejectBtnText}>Decline</Text>
                       </>
@@ -1063,11 +1063,13 @@ export default function MyInterestScreen() {
                     <>
                       <Ionicons
                         name="close-circle-outline"
-                        size={14}
+                        size={15}
                         color="#DC2626"
                         style={{ marginRight: 5 }}
                       />
-                      <Text style={styles.cancelAcceptedText}>Cancel / Decline</Text>
+                      <Text style={styles.cancelAcceptedText}>
+                        Cancel / Decline
+                      </Text>
                     </>
                   )}
                 </TouchableOpacity>
@@ -1082,7 +1084,7 @@ export default function MyInterestScreen() {
                 >
                   <Ionicons
                     name="trash-outline"
-                    size={14}
+                    size={15}
                     color="#DC2626"
                     style={{ marginRight: 5 }}
                   />
@@ -1106,7 +1108,7 @@ export default function MyInterestScreen() {
                 <>
                   <Ionicons
                     name="trash-outline"
-                    size={14}
+                    size={15}
                     color="#DC2626"
                     style={{ marginRight: 5 }}
                   />
@@ -1124,11 +1126,13 @@ export default function MyInterestScreen() {
           >
             <Ionicons
               name="person-outline"
-              size={14}
+              size={15}
               color={COLORS.primary}
               style={{ marginRight: 5 }}
             />
-            <Text style={styles.viewProfileText}>View Profile</Text>
+            <Text style={styles.viewProfileText} numberOfLines={1}>
+              {viewLabel}
+            </Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -1136,7 +1140,7 @@ export default function MyInterestScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={["top", "left", "right"]}>
+    <SafeAreaView style={styles.safeArea} edges={["left", "right"]}>
       {/* ---------- STICKY APP HEADER ---------- */}
       <ScreenHeader
         title="Interests"
@@ -1179,7 +1183,6 @@ export default function MyInterestScreen() {
           </TouchableOpacity>
         }
       >
-
         {/* Tab Segment Controls: Received vs Sent */}
         <View style={styles.segmentContainer}>
           <TouchableOpacity
@@ -1192,9 +1195,9 @@ export default function MyInterestScreen() {
           >
             <Ionicons
               name="mail-unread-outline"
-              size={15}
-              color={activeTab === "received" ? "#fff" : COLORS.text}
-              style={{ marginRight: 6 }}
+              size={16}
+              color={activeTab === "received" ? "#fff" : COLORS.textLight}
+              style={{ marginRight: 7 }}
             />
             <Text
               style={[
@@ -1202,7 +1205,7 @@ export default function MyInterestScreen() {
                 activeTab === "received" && styles.segmentTextActive,
               ]}
             >
-              Received Requests
+              Received
             </Text>
           </TouchableOpacity>
 
@@ -1216,9 +1219,9 @@ export default function MyInterestScreen() {
           >
             <Ionicons
               name="paper-plane-outline"
-              size={15}
-              color={activeTab === "sent" ? "#fff" : COLORS.text}
-              style={{ marginRight: 6 }}
+              size={16}
+              color={activeTab === "sent" ? "#fff" : COLORS.textLight}
+              style={{ marginRight: 7 }}
             />
             <Text
               style={[
@@ -1226,17 +1229,19 @@ export default function MyInterestScreen() {
                 activeTab === "sent" && styles.segmentTextActive,
               ]}
             >
-              Sent Interests
+              Sent
             </Text>
           </TouchableOpacity>
         </View>
 
         {/* Instant Search Bar */}
-        {(totalItems > 0 || currentList.length > 0 || searchQuery.length > 0) && (
+        {(totalItems > 0 ||
+          currentList.length > 0 ||
+          searchQuery.length > 0) && (
           <View style={styles.searchBarContainer}>
             <Ionicons
               name="search"
-              size={17}
+              size={18}
               color={COLORS.textLight}
               style={styles.searchIcon}
             />
@@ -1257,7 +1262,7 @@ export default function MyInterestScreen() {
               >
                 <Ionicons
                   name="close-circle"
-                  size={17}
+                  size={18}
                   color={COLORS.textLight}
                 />
               </TouchableOpacity>
@@ -1267,23 +1272,24 @@ export default function MyInterestScreen() {
       </ScreenHeader>
 
       {/* Package Limit / Upgrade Notice Banner for Free or Low Balance */}
-      {(!isPremiumUser || (remainingInterestsCount !== null && remainingInterestsCount <= 2)) && (
+      {(!isPremiumUser ||
+        (remainingInterestsCount !== null && remainingInterestsCount <= 2)) && (
         <TouchableOpacity
           style={styles.upgradeNoticeBanner}
           onPress={() => navigation.navigate("Packages")}
-          activeOpacity={0.85}
+          activeOpacity={0.9}
         >
           <View style={styles.upgradeNoticeLeft}>
             <View style={styles.upgradeNoticeIconWrap}>
-              <Ionicons name="sparkles" size={16} color="#B45309" />
+              <Ionicons name="diamond" size={17} color="#FBBF24" />
             </View>
             <View style={{ flex: 1 }}>
-              <Text style={styles.upgradeNoticeTitle}>
+              <Text style={styles.upgradeNoticeTitle} numberOfLines={1}>
                 {!isPremiumUser
                   ? "Express Interests with Premium"
                   : `Only ${remainingInterestsCount} Interests Remaining`}
               </Text>
-              <Text style={styles.upgradeNoticeSubtitle}>
+              <Text style={styles.upgradeNoticeSubtitle} numberOfLines={2}>
                 {!isPremiumUser
                   ? "Upgrade your package to send direct interests & view contacts."
                   : "Renew your package to keep expressing interest to matches."}
@@ -1292,7 +1298,7 @@ export default function MyInterestScreen() {
           </View>
           <View style={styles.upgradeNoticeBtn}>
             <Text style={styles.upgradeNoticeBtnText}>Upgrade</Text>
-            <Ionicons name="chevron-forward" size={12} color="#fff" />
+            <Ionicons name="chevron-forward" size={12} color="#2B2D42" />
           </View>
         </TouchableOpacity>
       )}
@@ -1309,12 +1315,7 @@ export default function MyInterestScreen() {
 
       {/* ---------- CONTENT FEED ---------- */}
       {loading && !pageLoading ? (
-        <View style={styles.centerBox}>
-          <ActivityIndicator size="large" color={COLORS.primary} />
-          <Text style={styles.loadingText}>
-            Loading {activeTab === "received" ? "received requests" : "sent interests"}...
-          </Text>
-        </View>
+        <ListFeedSkeleton count={4} />
       ) : (
         <FlatList
           ref={flatListRef}
@@ -1341,20 +1342,82 @@ export default function MyInterestScreen() {
           }
           ListHeaderComponent={
             filteredInterests.length > 0 ? (
-              <View style={styles.resultsSummaryRow}>
-                <Text style={styles.resultsSummaryText}>
-                  Showing{" "}
-                  <Text style={styles.resultsSummaryBold}>
-                    {filteredInterests.length}
-                  </Text>{" "}
-                  of {totalItems || currentList.length}{" "}
-                  {activeTab === "received" ? "received requests" : "sent interests"}
-                </Text>
-                {searchQuery.trim() ? (
-                  <TouchableOpacity onPress={() => setSearchQuery("")}>
-                    <Text style={styles.clearSearchLink}>Clear Search</Text>
-                  </TouchableOpacity>
+              <View>
+                {/* Status summary tiles */}
+                {!searchQuery.trim() ? (
+                  <View style={styles.statsRow}>
+                    <View style={styles.statTile}>
+                      <View
+                        style={[
+                          styles.statIcon,
+                          { backgroundColor: "#FEF3C7" },
+                        ]}
+                      >
+                        <Ionicons name="time" size={15} color="#B45309" />
+                      </View>
+                      <Text style={styles.statNumber}>
+                        {statusCounts.pending}
+                      </Text>
+                      <Text style={styles.statLabel}>
+                        {activeTab === "received" ? "New" : "Pending"}
+                      </Text>
+                    </View>
+                    <View style={styles.statTile}>
+                      <View
+                        style={[
+                          styles.statIcon,
+                          { backgroundColor: "#DCFCE7" },
+                        ]}
+                      >
+                        <Ionicons
+                          name="checkmark-circle"
+                          size={15}
+                          color="#15803D"
+                        />
+                      </View>
+                      <Text style={styles.statNumber}>
+                        {statusCounts.accepted}
+                      </Text>
+                      <Text style={styles.statLabel}>Accepted</Text>
+                    </View>
+                    <View style={styles.statTile}>
+                      <View
+                        style={[
+                          styles.statIcon,
+                          { backgroundColor: "#FEE2E2" },
+                        ]}
+                      >
+                        <Ionicons
+                          name="close-circle"
+                          size={15}
+                          color="#B91C1C"
+                        />
+                      </View>
+                      <Text style={styles.statNumber}>
+                        {statusCounts.declined}
+                      </Text>
+                      <Text style={styles.statLabel}>Declined</Text>
+                    </View>
+                  </View>
                 ) : null}
+
+                <View style={styles.resultsSummaryRow}>
+                  <Text style={styles.resultsSummaryText}>
+                    Showing{" "}
+                    <Text style={styles.resultsSummaryBold}>
+                      {filteredInterests.length}
+                    </Text>{" "}
+                    of {totalItems || currentList.length}{" "}
+                    {activeTab === "received"
+                      ? "received requests"
+                      : "sent interests"}
+                  </Text>
+                  {searchQuery.trim() ? (
+                    <TouchableOpacity onPress={() => setSearchQuery("")}>
+                      <Text style={styles.clearSearchLink}>Clear Search</Text>
+                    </TouchableOpacity>
+                  ) : null}
+                </View>
               </View>
             ) : null
           }
@@ -1365,15 +1428,14 @@ export default function MyInterestScreen() {
                   <Text style={styles.paginationSummaryText}>
                     Showing{" "}
                     <Text style={styles.paginationBoldText}>
-                      {totalItems === 0
-                        ? 0
-                        : (currentPage - 1) * perPage + 1}
-                      -
+                      {totalItems === 0 ? 0 : (currentPage - 1) * perPage + 1}-
                       {Math.min(currentPage * perPage, totalItems)}
                     </Text>{" "}
                     of{" "}
                     <Text style={styles.paginationBoldText}>{totalItems}</Text>{" "}
-                    {activeTab === "received" ? "received requests" : "sent interests"}
+                    {activeTab === "received"
+                      ? "received requests"
+                      : "sent interests"}
                   </Text>
                 </View>
 
@@ -1497,7 +1559,9 @@ export default function MyInterestScreen() {
           ListEmptyComponent={
             searchQuery.trim() ? (
               <View style={styles.emptyContainer}>
-                <View style={styles.emptyIconCircle}>
+                <View
+                  style={[styles.emptyIconCircle, styles.emptyCircleReceived]}
+                >
                   <Ionicons
                     name="search-outline"
                     size={42}
@@ -1506,7 +1570,8 @@ export default function MyInterestScreen() {
                 </View>
                 <Text style={styles.emptyTitle}>No Matching Interests</Text>
                 <Text style={styles.emptySubtitle}>
-                  We could not find any interest matching &ldquo;{searchQuery}&rdquo;.
+                  We could not find any interest matching &ldquo;{searchQuery}
+                  &rdquo;.
                 </Text>
                 <TouchableOpacity
                   style={styles.exploreBtn}
@@ -1578,55 +1643,12 @@ const styles = StyleSheet.create({
     backgroundColor: "#F9F6F4",
   },
 
-  /* Header Group */
-  headerTopRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-  headerTitleGroup: {
-    flex: 1,
-    marginRight: 10,
-  },
-  titleWithBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-  },
-  title: {
-    fontSize: 22,
-    fontFamily: FONTS.bold,
-    color: COLORS.text,
-    letterSpacing: -0.3,
-  },
-  countBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#FFF1F2",
-    paddingHorizontal: 9,
-    paddingVertical: 3.5,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: "#FFE4E8",
-  },
-  countBadgeText: {
-    fontSize: 11.5,
-    fontFamily: FONTS.bold,
-    color: COLORS.primary,
-  },
-  subtitle: {
-    fontSize: 12,
-    fontFamily: FONTS.regular,
-    color: COLORS.textLight,
-    marginTop: 2,
-  },
-
   /* Package Shortcut Pill */
   packageShortcutPill: {
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 10,
-    paddingVertical: 5,
+    paddingHorizontal: 11,
+    paddingVertical: 6,
     borderRadius: 16,
     borderWidth: 1,
   },
@@ -1652,50 +1674,56 @@ const styles = StyleSheet.create({
   /* Segmented Tab Control */
   segmentContainer: {
     flexDirection: "row",
-    backgroundColor: "#EFE8E3",
-    borderRadius: 12,
-    padding: 3,
+    backgroundColor: "#F3ECE8",
+    borderRadius: 14,
+    padding: 4,
     marginTop: 12,
   },
   segmentBtn: {
     flex: 1,
+    height: 40,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: 8,
-    borderRadius: 10,
+    borderRadius: 11,
   },
   segmentBtnActive: {
     backgroundColor: COLORS.primary,
     shadowColor: COLORS.primary,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 3,
-    elevation: 2,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.3,
+    shadowRadius: 5,
+    elevation: 3,
   },
   segmentText: {
-    fontSize: 12.5,
+    fontSize: 13.5,
     fontFamily: FONTS.semiBold,
-    color: COLORS.text,
+    color: COLORS.textLight,
   },
   segmentTextActive: {
     color: "#fff",
+    fontFamily: FONTS.bold,
   },
 
   /* Search Bar */
   searchBarContainer: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#FAF5F2",
-    borderRadius: 12,
+    backgroundColor: "#fff",
+    borderRadius: 14,
     borderWidth: 1,
     borderColor: "#EAE0DA",
-    paddingHorizontal: 12,
-    height: 42,
-    marginTop: 12,
+    paddingHorizontal: 13,
+    height: 46,
+    marginTop: 10,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 3,
+    elevation: 1,
   },
   searchIcon: {
-    marginRight: 8,
+    marginRight: 9,
   },
   searchInput: {
     flex: 1,
@@ -1713,14 +1741,18 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    backgroundColor: "#FEF3C7",
-    borderWidth: 1,
-    borderColor: "#FDE68A",
-    borderRadius: 14,
+    backgroundColor: "#2B2D42",
+    borderRadius: 18,
     marginHorizontal: 16,
-    marginTop: 10,
+    marginTop: 12,
     marginBottom: 2,
-    padding: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    shadowColor: "#2B2D42",
+    shadowOffset: { width: 0, height: 5 },
+    shadowOpacity: 0.22,
+    shadowRadius: 9,
+    elevation: 4,
   },
   upgradeNoticeLeft: {
     flexDirection: "row",
@@ -1729,38 +1761,39 @@ const styles = StyleSheet.create({
     marginRight: 10,
   },
   upgradeNoticeIconWrap: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: "#FDE68A",
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    backgroundColor: "rgba(251,191,36,0.16)",
     alignItems: "center",
     justifyContent: "center",
-    marginRight: 10,
+    marginRight: 11,
   },
   upgradeNoticeTitle: {
-    fontSize: 12.5,
+    fontSize: 13,
     fontFamily: FONTS.bold,
-    color: "#92400E",
+    color: "#fff",
   },
   upgradeNoticeSubtitle: {
     fontSize: 11,
     fontFamily: FONTS.regular,
-    color: "#78350F",
-    marginTop: 1,
+    color: "#CBD5E1",
+    marginTop: 2,
+    lineHeight: 15,
   },
   upgradeNoticeBtn: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#D97706",
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 8,
+    backgroundColor: "#FBBF24",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
     gap: 3,
   },
   upgradeNoticeBtnText: {
     fontSize: 11.5,
     fontFamily: FONTS.bold,
-    color: "#fff",
+    color: "#2B2D42",
   },
 
   /* Content Feed */
@@ -1768,6 +1801,48 @@ const styles = StyleSheet.create({
     padding: 16,
     paddingBottom: 40,
   },
+
+  /* Summary tiles */
+  statsRow: {
+    flexDirection: "row",
+    gap: 10,
+    marginBottom: 14,
+  },
+  statTile: {
+    flex: 1,
+    backgroundColor: "#fff",
+    borderRadius: 16,
+    paddingVertical: 11,
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "#EFE8E3",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 4,
+    elevation: 1,
+  },
+  statIcon: {
+    width: 28,
+    height: 28,
+    borderRadius: 9,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 6,
+  },
+  statNumber: {
+    fontSize: 17,
+    fontFamily: FONTS.bold,
+    color: COLORS.text,
+    lineHeight: 21,
+  },
+  statLabel: {
+    fontSize: 10.5,
+    fontFamily: FONTS.medium,
+    color: COLORS.textLight,
+    marginTop: 1,
+  },
+
   resultsSummaryRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -1793,16 +1868,38 @@ const styles = StyleSheet.create({
   /* Card */
   card: {
     backgroundColor: "#fff",
-    borderRadius: 18,
+    borderRadius: 20,
     padding: 14,
     marginBottom: 14,
     borderWidth: 1,
     borderColor: "#EFE8E3",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 6,
-    elevation: 2,
+    borderLeftWidth: 4,
+    shadowColor: "#2B1B14",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.07,
+    shadowRadius: 10,
+    elevation: 3,
+  },
+  cardHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingBottom: 11,
+    marginBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: "#F3EEEA",
+    gap: 8,
+  },
+  cardHeaderLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    flex: 1,
+  },
+  cardHeaderText: {
+    fontSize: 11.5,
+    fontFamily: FONTS.medium,
+    color: COLORS.textLight,
+    flexShrink: 1,
   },
   cardTopRow: {
     flexDirection: "row",
@@ -1812,9 +1909,9 @@ const styles = StyleSheet.create({
   /* Portrait Photo */
   photoContainer: {
     position: "relative",
-    width: 82,
-    height: 98,
-    borderRadius: 14,
+    width: 92,
+    height: 120,
+    borderRadius: 16,
     overflow: "hidden",
     backgroundColor: "#FCE7F3",
   },
@@ -1823,42 +1920,30 @@ const styles = StyleSheet.create({
     height: "100%",
     resizeMode: "cover",
   },
-  photoFallback: {
-    width: "100%",
-    height: "100%",
-    backgroundColor: "#2B2D42",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  photoInitial: {
-    color: "#fff",
-    fontSize: 28,
-    fontFamily: FONTS.bold,
-  },
   planBadge: {
     position: "absolute",
-    bottom: 5,
-    left: 5,
-    right: 5,
+    bottom: 6,
+    left: 6,
+    right: 6,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: 2,
+    paddingVertical: 3,
     paddingHorizontal: 4,
-    borderRadius: 6,
+    borderRadius: 8,
   },
   planPremium: {
-    backgroundColor: "#E11D48",
+    backgroundColor: "rgba(225,29,72,0.92)",
   },
   planFree: {
-    backgroundColor: "#475569",
+    backgroundColor: "rgba(71,85,105,0.92)",
   },
   planBadgeText: {
     color: "#fff",
     fontSize: 8.5,
     fontFamily: FONTS.bold,
     textTransform: "uppercase",
-    letterSpacing: 0.4,
+    letterSpacing: 0.5,
   },
 
   /* Info Column */
@@ -1866,28 +1951,27 @@ const styles = StyleSheet.create({
     flex: 1,
     marginLeft: 14,
   },
-  nameHeaderRow: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    justifyContent: "space-between",
-  },
   cardName: {
-    fontSize: 16,
+    fontSize: 17,
     fontFamily: FONTS.bold,
     color: COLORS.text,
     letterSpacing: -0.2,
   },
   cardAge: {
     fontFamily: FONTS.medium,
+    fontSize: 14,
     color: COLORS.textLight,
   },
   idBadgeRow: {
+    flexDirection: "row",
+    alignItems: "center",
     alignSelf: "flex-start",
     backgroundColor: "#F1F5F9",
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 6,
-    marginTop: 3,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 7,
+    marginTop: 4,
+    gap: 3,
   },
   idBadgeText: {
     fontSize: 10.5,
@@ -1895,13 +1979,63 @@ const styles = StyleSheet.create({
     color: "#475569",
   },
 
+  /* Quick fact chips */
+  chipsRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 5,
+    marginTop: 9,
+  },
+  chip: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#FFF5F7",
+    paddingHorizontal: 8,
+    paddingVertical: 3.5,
+    borderRadius: 9,
+    borderWidth: 1,
+    borderColor: "#FFE4E8",
+    maxWidth: "100%",
+  },
+  chipText: {
+    fontSize: 11,
+    fontFamily: FONTS.semiBold,
+    color: "#4A3E3D",
+    marginLeft: 4,
+  },
+
+  /* Detail lines */
+  infoLines: {
+    marginTop: 8,
+    gap: 5,
+  },
+  infoLine: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  infoLineIcon: {
+    width: 20,
+    height: 20,
+    borderRadius: 7,
+    backgroundColor: "#FFF5F7",
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 7,
+  },
+  infoLineText: {
+    flex: 1,
+    fontSize: 12,
+    fontFamily: FONTS.medium,
+    color: "#4A3E3D",
+  },
+
   /* Status Pill */
   statusPill: {
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 8,
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: 10,
     borderWidth: 1,
   },
   statusPillAccepted: {
@@ -1930,63 +2064,59 @@ const styles = StyleSheet.create({
     color: "#92400E",
   },
 
-  /* Attribute Chips */
-  chipsRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 5,
-    marginTop: 8,
-  },
-  chip: {
+  /* Status note */
+  noteBox: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#FFF5F7",
-    paddingHorizontal: 7,
-    paddingVertical: 3,
-    borderRadius: 8,
+    borderRadius: 12,
+    paddingVertical: 9,
+    paddingHorizontal: 11,
+    marginTop: 12,
+  },
+  noteBoxAccepted: {
+    backgroundColor: "#F0FDF4",
     borderWidth: 1,
-    borderColor: "#FFE4E8",
-    maxWidth: "100%",
+    borderColor: "#BBF7D0",
   },
-  chipText: {
-    fontSize: 11,
+  noteBoxRejected: {
+    backgroundColor: "#FEF2F2",
+    borderWidth: 1,
+    borderColor: "#FECACA",
+  },
+  noteText: {
+    flex: 1,
+    fontSize: 11.5,
     fontFamily: FONTS.medium,
-    color: "#4A3E3D",
-    marginLeft: 3.5,
-  },
-
-  /* Card Divider */
-  cardDivider: {
-    height: 1,
-    backgroundColor: "#F3EEEA",
-    marginVertical: 12,
+    lineHeight: 16,
   },
 
   /* Actions Grid */
   actionsGrid: {
     flexDirection: "row",
-    gap: 10,
+    gap: 8,
+    marginTop: 14,
   },
   actionBtn: {
     flex: 1,
-    height: 38,
-    borderRadius: 10,
+    height: 44,
+    borderRadius: 13,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
+    paddingHorizontal: 6,
   },
   acceptBtn: {
     backgroundColor: "#10B981",
     shadowColor: "#10B981",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 3,
-    elevation: 2,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.3,
+    shadowRadius: 5,
+    elevation: 3,
   },
   acceptBtnText: {
     color: "#fff",
     fontFamily: FONTS.bold,
-    fontSize: 12.5,
+    fontSize: 13,
   },
   rejectBtn: {
     backgroundColor: "#FEF2F2",
@@ -1996,7 +2126,7 @@ const styles = StyleSheet.create({
   rejectBtnText: {
     color: "#DC2626",
     fontFamily: FONTS.semiBold,
-    fontSize: 12.5,
+    fontSize: 13,
   },
   cancelAcceptedBtn: {
     backgroundColor: "#FEF2F2",
@@ -2009,14 +2139,14 @@ const styles = StyleSheet.create({
     fontSize: 12.5,
   },
   viewProfileBtn: {
-    backgroundColor: "#FAF5F2",
+    backgroundColor: "#FFF5F7",
     borderWidth: 1,
-    borderColor: "#EADFD8",
+    borderColor: "#FFD9E0",
   },
   viewProfileText: {
     color: COLORS.primary,
-    fontFamily: FONTS.semiBold,
-    fontSize: 12.5,
+    fontFamily: FONTS.bold,
+    fontSize: 13,
   },
   removeInterestBtn: {
     backgroundColor: "#FEF2F2",
@@ -2026,22 +2156,10 @@ const styles = StyleSheet.create({
   removeInterestText: {
     color: "#DC2626",
     fontFamily: FONTS.semiBold,
-    fontSize: 12.5,
+    fontSize: 13,
   },
 
   /* Empty State */
-  centerBox: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    padding: 24,
-  },
-  loadingText: {
-    marginTop: 12,
-    fontSize: 13,
-    fontFamily: FONTS.medium,
-    color: COLORS.textLight,
-  },
   emptyContainer: {
     alignItems: "center",
     justifyContent: "center",
@@ -2049,16 +2167,16 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
   },
   emptyIconCircle: {
-    width: 86,
-    height: 86,
-    borderRadius: 43,
+    width: 96,
+    height: 96,
+    borderRadius: 48,
     alignItems: "center",
     justifyContent: "center",
-    marginBottom: 18,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.12,
-    shadowRadius: 8,
-    elevation: 3,
+    marginBottom: 20,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.14,
+    shadowRadius: 10,
+    elevation: 4,
   },
   emptyCircleReceived: {
     backgroundColor: "#FFF1F2",
@@ -2092,14 +2210,14 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: COLORS.primary,
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    borderRadius: 14,
+    paddingHorizontal: 22,
+    paddingVertical: 13,
+    borderRadius: 15,
     shadowColor: COLORS.primary,
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.25,
-    shadowRadius: 5,
-    elevation: 3,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.28,
+    shadowRadius: 6,
+    elevation: 4,
   },
   exploreBtnText: {
     color: "#fff",
@@ -2110,18 +2228,18 @@ const styles = StyleSheet.create({
   /* Pagination Card */
   paginationCard: {
     backgroundColor: "#fff",
-    borderRadius: 14,
+    borderRadius: 18,
     paddingVertical: 14,
     paddingHorizontal: 12,
-    marginTop: 6,
+    marginTop: 4,
     marginBottom: 24,
     borderWidth: 1,
     borderColor: "#F1E8E2",
     alignItems: "center",
     shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.04,
-    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 6,
     elevation: 2,
   },
   paginationSummaryRow: {
@@ -2149,8 +2267,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 10,
-    height: 32,
-    borderRadius: 8,
+    height: 34,
+    borderRadius: 10,
     backgroundColor: "#F8FAFC",
     borderWidth: 1,
     borderColor: "#E2E8F0",
@@ -2177,9 +2295,9 @@ const styles = StyleSheet.create({
     flexWrap: "wrap",
   },
   pageNumberBtn: {
-    minWidth: 30,
-    height: 30,
-    borderRadius: 6,
+    minWidth: 32,
+    height: 32,
+    borderRadius: 10,
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: "#F8FAFC",
@@ -2190,6 +2308,11 @@ const styles = StyleSheet.create({
   pageNumberBtnActive: {
     backgroundColor: COLORS.primary,
     borderColor: COLORS.primary,
+    shadowColor: COLORS.primary,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 2,
   },
   pageNumberBtnLoading: {
     opacity: 0.6,
@@ -2222,7 +2345,7 @@ const styles = StyleSheet.create({
     marginHorizontal: 16,
     marginTop: 8,
     marginBottom: 4,
-    borderRadius: 10,
+    borderRadius: 12,
     gap: 8,
   },
   pageLoadingText: {

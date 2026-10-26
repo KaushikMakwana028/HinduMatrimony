@@ -10,7 +10,6 @@ import {
   Alert,
   Modal,
   RefreshControl,
-  StatusBar,
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -463,9 +462,7 @@ export default function HappyStoryScreen({ navigation }) {
   };
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={["top", "left", "right"]}>
-      <StatusBar barStyle="dark-content" />
-
+    <SafeAreaView style={styles.safeArea} edges={["left", "right"]}>
       {/* ---------- HEADER ---------- */}
       <ScreenHeader
         title="Happy Story"

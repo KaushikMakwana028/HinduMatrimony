@@ -82,7 +82,7 @@ export default function DeleteAccountScreen({ navigation }) {
     };
 
     return (
-        <SafeAreaView style={styles.safeArea} edges={["top", "left", "right"]}>
+        <SafeAreaView style={styles.safeArea} edges={["left", "right"]}>
             <ScreenHeader
                 title="Delete Account"
                 subtitle="Permanent account deletion"

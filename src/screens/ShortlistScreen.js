@@ -22,8 +22,10 @@ import { useNavigation } from "@react-navigation/native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Ionicons } from "@expo/vector-icons";
 import ScreenHeader from "../components/ScreenHeader";
+import { ListFeedSkeleton } from "../components/Skeleton";
 import { useAuth } from "../contexts/AuthContext";
 import activeMemberService from "../services/activeMemberService";
+import memberStateService from "../services/memberStateService";
 import {
   subscribeMemberAction,
   emitMemberAction,
@@ -63,51 +65,20 @@ function getPaginationRange(currentPage, totalPages) {
 }
 
 /**
- * Resolves membership plan (Premium vs Free badge)
+ * Small icon + text info row used inside the card (UI only)
  */
-function getMemberPlan(item) {
-  if (!item) return "Free";
-
-  const packageName = String(
-    item.package_name || item.package?.name || item.package || "",
-  )
-    .trim()
-    .toLowerCase();
-
-  if (packageName.includes("free")) {
-    return "Free";
-  }
-  if (
-    packageName.includes("premium") ||
-    packageName.includes("gold") ||
-    packageName.includes("silver") ||
-    packageName.includes("platinum") ||
-    packageName.includes("vip") ||
-    packageName.includes("diamond") ||
-    packageName.includes("pro")
-  ) {
-    return "Premium";
-  }
-
-  const packageId = Number(item.package_id || item.current_package_id);
-  if (Number.isFinite(packageId) && packageId > 1) {
-    return "Premium";
-  }
-
-  const membershipNum = Number(item.membership);
-  if (Number.isFinite(membershipNum) && membershipNum >= 2) {
-    return "Premium";
-  }
-
-  if (
-    item.is_premium === true ||
-    item.is_premium === 1 ||
-    item.is_premium === "1"
-  ) {
-    return "Premium";
-  }
-
-  return "Free";
+function InfoLine({ icon, text }) {
+  if (!text) return null;
+  return (
+    <View style={styles.infoLine}>
+      <View style={styles.infoLineIcon}>
+        <Ionicons name={icon} size={12} color={COLORS.primary} />
+      </View>
+      <Text style={styles.infoLineText} numberOfLines={1}>
+        {text}
+      </Text>
+    </View>
+  );
 }
 
 /**
@@ -128,9 +99,7 @@ function formatShortlistMember(item, index) {
     "";
   const photoStr = String(rawPhoto).trim();
   const isValidPhoto =
-    photoStr &&
-    photoStr !== "null" &&
-    photoStr !== "undefined";
+    photoStr && photoStr !== "null" && photoStr !== "undefined";
   const finalPhoto = isValidPhoto ? photoStr : DEFAULT_AVATAR;
 
   const loc =
@@ -141,23 +110,37 @@ function formatShortlistMember(item, index) {
     item.country ||
     "";
 
+  const resolvedCode = memberStateService.resolveMemberCode(item);
+  const interestStatus = memberStateService.getInterestStatus(
+    id || item.user_id || resolvedCode,
+  );
+  const rawStatus = String(item.interest_status || "").toLowerCase();
+  const isRejected =
+    rawStatus.includes("reject") ||
+    rawStatus.includes("decline") ||
+    interestStatus === "Rejected";
+  const isAccepted = !isRejected && interestStatus === "Accepted";
+
   const hasExpressedInterest =
-    item.express_interest === true ||
-    item.express_interest === 1 ||
-    item.express_interest === "1" ||
-    item.interest_status === "sent interest" ||
-    item.interest_status === 1 ||
-    item.interest_status === "1";
+    !isRejected &&
+    (isAccepted ||
+      item.express_interest === true ||
+      item.express_interest === 1 ||
+      item.express_interest === "1" ||
+      rawStatus.includes("sent") ||
+      rawStatus.includes("pending") ||
+      memberStateService.isInterestSent(id || item.user_id || resolvedCode));
 
   return {
     id: id,
     userId: item.user_id || id,
     name: name,
-    memberId: String(
-      item.code || item.member_code || item.member_id || `HM-${id}`,
-    ),
+    memberId:
+      resolvedCode ||
+      String(item.code || item.member_code || item.member_id || `HM-${id}`),
     photo: finalPhoto,
-    plan: getMemberPlan(item),
+    plan: memberStateService.resolvePlan(item),
+    isAccepted,
     age: item.age || item.birthday || "",
     height: item.height
       ? String(item.height).includes("ft")
@@ -221,6 +204,7 @@ export default function ShortlistScreen() {
             : Array.isArray(res.data?.data)
               ? res.data.data
               : [];
+          memberStateService.registerMembers(rawList);
           const formatted = rawList.map(formatShortlistMember).filter(Boolean);
           setShortlistedMembers(formatted);
 
@@ -296,20 +280,35 @@ export default function ShortlistScreen() {
             const list = Array.isArray(res.data)
               ? res.data
               : res.data?.data || [];
+            memberStateService.syncInterestItems(list, { currentUserId: user?.id });
             const iMap = {};
+            const currentUid = user?.id ? String(user.id) : null;
             list.forEach((item) => {
-              const id =
-                item.user_id || item.id || item.member_id || item.interested_by;
-              if (id) iMap[String(id)] = true;
+              let targetId = null;
+              if (item.user?.id && String(item.user.id) !== currentUid) {
+                targetId = item.user.id;
+              } else if (item.interested_to && String(item.interested_to) !== currentUid) {
+                targetId = item.interested_to;
+              } else if (item.user_id && String(item.user_id) !== currentUid) {
+                targetId = item.user_id;
+              }
+              const rawStatus = String(
+                item.status || item.interest_status || "",
+              ).toLowerCase();
+              const isRejected =
+                rawStatus.includes("reject") ||
+                rawStatus.includes("decline") ||
+                item.status === 2 ||
+                item.interest_status === 2;
+              if (targetId && !isRejected) {
+                iMap[String(targetId)] = true;
+              }
             });
-            setInterestSentMap((prev) => {
-              const merged = { ...prev, ...iMap };
-              AsyncStorage.setItem(
-                SENT_INTERESTS_KEY,
-                JSON.stringify(merged),
-              ).catch(() => {});
-              return merged;
-            });
+            setInterestSentMap(iMap);
+            AsyncStorage.setItem(
+              SENT_INTERESTS_KEY,
+              JSON.stringify(iMap),
+            ).catch(() => {});
           }
         })
         .catch(() => {});
@@ -323,7 +322,7 @@ export default function ShortlistScreen() {
     return () => {
       isMounted = false;
     };
-  }, [token, SENT_INTERESTS_KEY, fetchShortlists]);
+  }, [token, user?.id, SENT_INTERESTS_KEY, fetchShortlists]);
 
   // Pull to refresh handler
   const onRefresh = useCallback(async () => {
@@ -356,7 +355,9 @@ export default function ShortlistScreen() {
       if (type === "shortlist") {
         if (!value) {
           setShortlistedMembers((prev) =>
-            prev.filter((m) => String(m.id) !== uid && String(m.userId) !== uid),
+            prev.filter(
+              (m) => String(m.id) !== uid && String(m.userId) !== uid,
+            ),
           );
           setTotalItems((prev) => Math.max(0, prev - 1));
         } else {
@@ -366,12 +367,13 @@ export default function ShortlistScreen() {
       } else if (type === "interest") {
         setInterestSentMap((prev) => {
           const next = { ...prev, [uid]: value };
-          AsyncStorage.setItem(
-            SENT_INTERESTS_KEY,
-            JSON.stringify(next),
-          ).catch(() => {});
+          AsyncStorage.setItem(SENT_INTERESTS_KEY, JSON.stringify(next)).catch(
+            () => {},
+          );
           return next;
         });
+      } else if (type === "interest_status") {
+        setInterestSentMap((prev) => ({ ...prev }));
       }
     });
   }, [fetchShortlists, currentPage, SENT_INTERESTS_KEY]);
@@ -389,7 +391,10 @@ export default function ShortlistScreen() {
           onPress: async () => {
             setActionInProgress((prev) => ({ ...prev, [member.id]: true }));
             try {
-              await activeMemberService.removeFromShortlist(member.userId, token);
+              await activeMemberService.removeFromShortlist(
+                member.userId,
+                token,
+              );
               setShortlistedMembers((prev) =>
                 prev.filter(
                   (m) =>
@@ -417,10 +422,28 @@ export default function ShortlistScreen() {
   // Handle Express Interest directly from Shortlist card
   const handleSendInterest = async (member) => {
     const uid = String(member.userId || member.id);
+    const isAccepted = memberStateService.isInterestAccepted(
+      member.id || member.userId || member.memberId,
+    );
+    if (isAccepted) {
+      Alert.alert(
+        "Connection Accepted 💖",
+        `You and ${member.name} are already connected! Would you like to view their full profile?`,
+        [
+          { text: "Close", style: "cancel" },
+          {
+            text: "View Profile",
+            onPress: () => handleViewProfile(member),
+          },
+        ],
+      );
+      return;
+    }
+
     const isSent = Boolean(
       interestSentMap[uid] ||
-        interestSentMap[String(member.id)] ||
-        member.hasExpressedInterest,
+      interestSentMap[String(member.id)] ||
+      member.hasExpressedInterest,
     );
     if (isSent) {
       Alert.alert(
@@ -436,14 +459,26 @@ export default function ShortlistScreen() {
                 const next = { ...prev };
                 delete next[uid];
                 delete next[String(member.id)];
-                AsyncStorage.setItem(SENT_INTERESTS_KEY, JSON.stringify(next)).catch(() => {});
+                AsyncStorage.setItem(
+                  SENT_INTERESTS_KEY,
+                  JSON.stringify(next),
+                ).catch(() => {});
                 return next;
               });
-              emitMemberAction({ userId: member.userId, type: "interest", value: false });
-              Alert.alert("Interest Removed", `Your interest in ${member.name} has been removed.`);
+              memberStateService.setInterestStatus(member.userId, null);
+              memberStateService.setInterestSent(member.userId, false);
+              emitMemberAction({
+                userId: member.userId,
+                type: "interest",
+                value: false,
+              });
+              Alert.alert(
+                "Interest Removed",
+                `Your interest in ${member.name} has been removed.`,
+              );
             },
           },
-        ]
+        ],
       );
       return;
     }
@@ -460,13 +495,17 @@ export default function ShortlistScreen() {
           [uid]: true,
           [String(member.id)]: true,
         };
-        AsyncStorage.setItem(
-          SENT_INTERESTS_KEY,
-          JSON.stringify(next),
-        ).catch(() => {});
+        AsyncStorage.setItem(SENT_INTERESTS_KEY, JSON.stringify(next)).catch(
+          () => {},
+        );
         return next;
       });
-      emitMemberAction({ userId: member.userId, type: "interest", value: true });
+      memberStateService.setInterestSent(member.userId, true);
+      emitMemberAction({
+        userId: member.userId,
+        type: "interest",
+        value: true,
+      });
       Alert.alert(
         "Interest Expressed! 💖",
         response?.message || `Your interest has been sent to ${member.name}.`,
@@ -501,21 +540,44 @@ export default function ShortlistScreen() {
 
   // Open Full Member Profile
   const handleViewProfile = (member) => {
-    const isSent = Boolean(
-      interestSentMap[String(member.id)] ||
-        interestSentMap[String(member.userId)] ||
-        member.hasExpressedInterest,
+    const interestStatus = memberStateService.getInterestStatus(
+      member.id || member.userId || member.memberId,
     );
+    const isAccepted = interestStatus === "Accepted";
+    const isRejected = interestStatus === "Rejected";
+    const isSent =
+      !isRejected &&
+      (isAccepted ||
+        Boolean(
+          interestSentMap[String(member.id)] ||
+          interestSentMap[String(member.userId)] ||
+          member.hasExpressedInterest,
+        ));
 
     navigation.navigate("MemberProfile", {
       userId: member.userId,
+      interestStatus: isAccepted
+        ? "Accepted"
+        : isRejected
+          ? "Rejected"
+          : isSent
+            ? "Pending"
+            : null,
       member: {
+        id: member.userId,
         name: member.name,
         memberId: member.memberId,
         photo: member.photo,
         age: member.age,
         plan: member.plan,
         interestSent: isSent,
+        interestStatus: isAccepted
+          ? "Accepted"
+          : isRejected
+            ? "Rejected"
+            : isSent
+              ? "Pending"
+              : null,
         shortlisted: true,
         summary: {
           height: member.height,
@@ -559,17 +621,109 @@ export default function ShortlistScreen() {
     });
   }, [shortlistedMembers, searchQuery]);
 
+  // Interest summary for the tiles (UI only, mirrors the card status logic)
+  const interestSummary = useMemo(() => {
+    let sent = 0;
+    let accepted = 0;
+    shortlistedMembers.forEach((m) => {
+      const st = memberStateService.getInterestStatus(
+        m.id || m.userId || m.memberId,
+      );
+      const acc = st === "Accepted";
+      const rej = st === "Rejected";
+      const snt =
+        !rej &&
+        (acc ||
+          Boolean(
+            interestSentMap[String(m.id)] ||
+            interestSentMap[String(m.userId)] ||
+            m.hasExpressedInterest,
+          ));
+      if (acc) accepted += 1;
+      else if (snt) sent += 1;
+    });
+    return { sent, accepted };
+  }, [shortlistedMembers, interestSentMap]);
+
   // Render individual shortlisted member card
   const renderItem = ({ item }) => {
-    const isSent = Boolean(
-      interestSentMap[String(item.id)] ||
-        interestSentMap[String(item.userId)] ||
-        item.hasExpressedInterest,
+    const interestStatus = memberStateService.getInterestStatus(
+      item.id || item.userId || item.memberId,
     );
+    const isAccepted = interestStatus === "Accepted";
+    const isRejected = interestStatus === "Rejected";
+    const isSent =
+      !isRejected &&
+      (isAccepted ||
+        Boolean(
+          interestSentMap[String(item.id)] ||
+          interestSentMap[String(item.userId)] ||
+          item.hasExpressedInterest,
+        ));
     const busy = Boolean(actionInProgress[item.id]);
 
+    const accentColor = isAccepted ? "#10B981" : isSent ? "#34D399" : "#F59E0B";
+    const religionLine = item.religion
+      ? `${item.religion}${item.caste ? ` • ${item.caste}` : ""}`
+      : "";
+
     return (
-      <View style={styles.card}>
+      <View style={[styles.card, { borderLeftColor: accentColor }]}>
+        {/* Card header: saved tag, interest state and remove button */}
+        <View style={styles.cardHeaderRow}>
+          <View style={styles.cardHeaderLeft}>
+            <View style={styles.savedTag}>
+              <Ionicons
+                name="star"
+                size={11}
+                color="#D97706"
+                style={{ marginRight: 4 }}
+              />
+              <Text style={styles.savedTagText}>Shortlisted</Text>
+            </View>
+            {isAccepted ? (
+              <View style={[styles.stateTag, styles.stateTagAccepted]}>
+                <Ionicons
+                  name="checkmark-done"
+                  size={11}
+                  color="#15803D"
+                  style={{ marginRight: 3 }}
+                />
+                <Text style={[styles.stateTagText, { color: "#15803D" }]}>
+                  Connected
+                </Text>
+              </View>
+            ) : isSent ? (
+              <View style={[styles.stateTag, styles.stateTagSent]}>
+                <Ionicons
+                  name="paper-plane"
+                  size={10}
+                  color="#065F46"
+                  style={{ marginRight: 3 }}
+                />
+                <Text style={[styles.stateTagText, { color: "#065F46" }]}>
+                  Interest Sent
+                </Text>
+              </View>
+            ) : null}
+          </View>
+
+          {/* Remove from Shortlist Button */}
+          <TouchableOpacity
+            style={styles.trashBtn}
+            onPress={() => handleRemove(item)}
+            disabled={busy}
+            activeOpacity={0.7}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            {busy ? (
+              <ActivityIndicator size="small" color={COLORS.danger} />
+            ) : (
+              <Ionicons name="trash-outline" size={17} color={COLORS.danger} />
+            )}
+          </TouchableOpacity>
+        </View>
+
         {/* Top Info Section: Photo + Core Details */}
         <TouchableOpacity
           activeOpacity={0.85}
@@ -595,7 +749,7 @@ export default function ShortlistScreen() {
                 name={item.plan === "Premium" ? "ribbon" : "sparkles"}
                 size={9}
                 color="#fff"
-                style={{ marginRight: 2 }}
+                style={{ marginRight: 3 }}
               />
               <Text style={styles.planBadgeText}>{item.plan}</Text>
             </View>
@@ -603,87 +757,55 @@ export default function ShortlistScreen() {
 
           {/* Core Info Column */}
           <View style={styles.cardInfoCol}>
-            {/* Name, Age & Remove button row */}
-            <View style={styles.nameHeaderRow}>
-              <View style={{ flex: 1, marginRight: 8 }}>
-                <Text style={styles.cardName} numberOfLines={1}>
-                  {item.name}
-                  {item.age ? (
-                    <Text style={styles.cardAge}>, {item.age} yrs</Text>
-                  ) : null}
-                </Text>
-                <View style={styles.idBadgeRow}>
-                  <Text style={styles.idBadgeText}>{item.memberId}</Text>
-                </View>
-              </View>
+            <Text style={styles.cardName} numberOfLines={1}>
+              {item.name}
+              {item.age ? (
+                <Text style={styles.cardAge}>, {item.age} yrs</Text>
+              ) : null}
+            </Text>
 
-              {/* Remove from Shortlist Button */}
-              <TouchableOpacity
-                style={styles.trashBtn}
-                onPress={() => handleRemove(item)}
-                disabled={busy}
-                activeOpacity={0.7}
-                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-              >
-                {busy ? (
-                  <ActivityIndicator size="small" color={COLORS.danger} />
-                ) : (
-                  <Ionicons name="trash-outline" size={17} color={COLORS.danger} />
-                )}
-              </TouchableOpacity>
+            <View style={styles.idBadgeRow}>
+              <Ionicons name="finger-print" size={10} color="#64748B" />
+              <Text style={styles.idBadgeText}>{item.memberId}</Text>
             </View>
 
-            {/* Attribute Chips */}
-            <View style={styles.chipsRow}>
-              {item.height ? (
-                <View style={styles.chip}>
-                  <Ionicons name="resize-outline" size={11} color={COLORS.primary} />
-                  <Text style={styles.chipText}>{item.height}</Text>
-                </View>
-              ) : null}
+            {/* Compact quick facts */}
+            {item.height || item.maritalStatus ? (
+              <View style={styles.chipsRow}>
+                {item.height ? (
+                  <View style={styles.chip}>
+                    <Ionicons
+                      name="resize-outline"
+                      size={11}
+                      color={COLORS.primary}
+                    />
+                    <Text style={styles.chipText}>{item.height}</Text>
+                  </View>
+                ) : null}
 
-              {item.religion ? (
-                <View style={styles.chip}>
-                  <Ionicons name="flower-outline" size={11} color={COLORS.primary} />
-                  <Text style={styles.chipText} numberOfLines={1}>
-                    {item.religion}
-                    {item.caste ? ` • ${item.caste}` : ""}
-                  </Text>
-                </View>
-              ) : null}
+                {item.maritalStatus ? (
+                  <View style={styles.chip}>
+                    <Ionicons
+                      name="heart-outline"
+                      size={11}
+                      color={COLORS.primary}
+                    />
+                    <Text style={styles.chipText} numberOfLines={1}>
+                      {item.maritalStatus}
+                    </Text>
+                  </View>
+                ) : null}
+              </View>
+            ) : null}
 
-              {item.maritalStatus ? (
-                <View style={styles.chip}>
-                  <Ionicons name="heart-outline" size={11} color={COLORS.primary} />
-                  <Text style={styles.chipText} numberOfLines={1}>
-                    {item.maritalStatus}
-                  </Text>
-                </View>
-              ) : null}
-
-              {item.location ? (
-                <View style={styles.chip}>
-                  <Ionicons name="location-outline" size={11} color={COLORS.primary} />
-                  <Text style={styles.chipText} numberOfLines={1}>
-                    {item.location}
-                  </Text>
-                </View>
-              ) : null}
-
-              {item.profession ? (
-                <View style={styles.chip}>
-                  <Ionicons name="briefcase-outline" size={11} color={COLORS.primary} />
-                  <Text style={styles.chipText} numberOfLines={1}>
-                    {item.profession}
-                  </Text>
-                </View>
-              ) : null}
+            {/* Detail lines */}
+            <View style={styles.infoLines}>
+              <InfoLine icon="flower-outline" text={religionLine} />
+              <InfoLine icon="location-outline" text={item.location} />
+              <InfoLine icon="briefcase-outline" text={item.profession} />
             </View>
           </View>
         </TouchableOpacity>
-
-        {/* Divider */}
-        <View style={styles.cardDivider} />
 
         {/* Action Buttons Row */}
         <View style={styles.actionsGrid}>
@@ -691,25 +813,44 @@ export default function ShortlistScreen() {
           <TouchableOpacity
             style={[
               styles.actionBtn,
-              isSent ? styles.interestSentBtn : styles.sendInterestBtn,
+              isAccepted
+                ? styles.interestAcceptedBtn
+                : isSent
+                  ? styles.interestSentBtn
+                  : styles.sendInterestBtn,
             ]}
             onPress={() => handleSendInterest(item)}
             disabled={busy}
             activeOpacity={0.8}
           >
             <Ionicons
-              name={isSent ? "checkmark-circle" : "heart"}
-              size={15}
-              color={isSent ? "#065F46" : "#fff"}
+              name={
+                isAccepted
+                  ? "checkmark-done"
+                  : isSent
+                    ? "checkmark-circle"
+                    : "heart"
+              }
+              size={16}
+              color={isAccepted ? "#15803D" : isSent ? "#065F46" : "#fff"}
               style={{ marginRight: 6 }}
             />
             <Text
               style={[
                 styles.actionBtnText,
-                isSent ? styles.interestSentText : styles.sendInterestText,
+                isAccepted
+                  ? styles.interestAcceptedText
+                  : isSent
+                    ? styles.interestSentText
+                    : styles.sendInterestText,
               ]}
+              numberOfLines={1}
             >
-              {isSent ? "Interest Sent" : "Send Interest"}
+              {isAccepted
+                ? "Accepted"
+                : isSent
+                  ? "Interest Sent"
+                  : "Send Interest"}
             </Text>
           </TouchableOpacity>
 
@@ -721,11 +862,14 @@ export default function ShortlistScreen() {
           >
             <Ionicons
               name="person-outline"
-              size={14}
+              size={15}
               color={COLORS.primary}
               style={{ marginRight: 5 }}
             />
-            <Text style={[styles.actionBtnText, styles.viewProfileText]}>
+            <Text
+              style={[styles.actionBtnText, styles.viewProfileText]}
+              numberOfLines={1}
+            >
               View Profile
             </Text>
           </TouchableOpacity>
@@ -735,7 +879,7 @@ export default function ShortlistScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={["top", "left", "right"]}>
+    <SafeAreaView style={styles.safeArea} edges={["left", "right"]}>
       {/* ---------- STICKY HEADER ---------- */}
       <ScreenHeader
         title="Shortlisted"
@@ -746,11 +890,13 @@ export default function ShortlistScreen() {
         badgeBgColor="#FEF3C7"
       >
         {/* Instant Search Bar */}
-        {(totalItems > 0 || shortlistedMembers.length > 0 || searchQuery.length > 0) && (
+        {(totalItems > 0 ||
+          shortlistedMembers.length > 0 ||
+          searchQuery.length > 0) && (
           <View style={styles.searchBarContainer}>
             <Ionicons
               name="search"
-              size={17}
+              size={18}
               color={COLORS.textLight}
               style={styles.searchIcon}
             />
@@ -769,7 +915,11 @@ export default function ShortlistScreen() {
                 style={styles.clearSearchBtn}
                 hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
               >
-                <Ionicons name="close-circle" size={17} color={COLORS.textLight} />
+                <Ionicons
+                  name="close-circle"
+                  size={18}
+                  color={COLORS.textLight}
+                />
               </TouchableOpacity>
             )}
           </View>
@@ -788,16 +938,18 @@ export default function ShortlistScreen() {
 
       {/* ---------- CONTENT FEED ---------- */}
       {loading && !pageLoading ? (
-        <View style={styles.centerBox}>
-          <ActivityIndicator size="large" color={COLORS.primary} />
-          <Text style={styles.loadingText}>Loading shortlisted profiles...</Text>
-        </View>
+        <ListFeedSkeleton count={4} />
       ) : (
         <FlatList
           ref={flatListRef}
           data={filteredShortlists}
           keyExtractor={(item, index) =>
-            String(item?.userId || item?.id || item?.memberId || `shortlist_${index}`)
+            String(
+              item?.userId ||
+                item?.id ||
+                item?.memberId ||
+                `shortlist_${index}`,
+            )
           }
           renderItem={renderItem}
           contentContainerStyle={styles.listContent}
@@ -813,19 +965,78 @@ export default function ShortlistScreen() {
           }
           ListHeaderComponent={
             filteredShortlists.length > 0 ? (
-              <View style={styles.resultsSummaryRow}>
-                <Text style={styles.resultsSummaryText}>
-                  Showing{" "}
-                  <Text style={styles.resultsSummaryBold}>
-                    {filteredShortlists.length}
-                  </Text>{" "}
-                  of {totalItems || shortlistedMembers.length} shortlisted matches
-                </Text>
-                {searchQuery.trim() ? (
-                  <TouchableOpacity onPress={() => setSearchQuery("")}>
-                    <Text style={styles.clearSearchLink}>Clear Search</Text>
-                  </TouchableOpacity>
+              <View>
+                {/* Summary tiles */}
+                {!searchQuery.trim() ? (
+                  <View style={styles.statsRow}>
+                    <View style={styles.statTile}>
+                      <View
+                        style={[
+                          styles.statIcon,
+                          { backgroundColor: "#FEF3C7" },
+                        ]}
+                      >
+                        <Ionicons name="star" size={15} color="#D97706" />
+                      </View>
+                      <Text style={styles.statNumber}>
+                        {totalItems || shortlistedMembers.length}
+                      </Text>
+                      <Text style={styles.statLabel}>Saved</Text>
+                    </View>
+                    <View style={styles.statTile}>
+                      <View
+                        style={[
+                          styles.statIcon,
+                          { backgroundColor: "#ECFDF5" },
+                        ]}
+                      >
+                        <Ionicons
+                          name="paper-plane"
+                          size={14}
+                          color="#065F46"
+                        />
+                      </View>
+                      <Text style={styles.statNumber}>
+                        {interestSummary.sent}
+                      </Text>
+                      <Text style={styles.statLabel}>Interest Sent</Text>
+                    </View>
+                    <View style={styles.statTile}>
+                      <View
+                        style={[
+                          styles.statIcon,
+                          { backgroundColor: "#DCFCE7" },
+                        ]}
+                      >
+                        <Ionicons
+                          name="checkmark-done"
+                          size={16}
+                          color="#15803D"
+                        />
+                      </View>
+                      <Text style={styles.statNumber}>
+                        {interestSummary.accepted}
+                      </Text>
+                      <Text style={styles.statLabel}>Accepted</Text>
+                    </View>
+                  </View>
                 ) : null}
+
+                <View style={styles.resultsSummaryRow}>
+                  <Text style={styles.resultsSummaryText}>
+                    Showing{" "}
+                    <Text style={styles.resultsSummaryBold}>
+                      {filteredShortlists.length}
+                    </Text>{" "}
+                    of {totalItems || shortlistedMembers.length} shortlisted
+                    matches
+                  </Text>
+                  {searchQuery.trim() ? (
+                    <TouchableOpacity onPress={() => setSearchQuery("")}>
+                      <Text style={styles.clearSearchLink}>Clear Search</Text>
+                    </TouchableOpacity>
+                  ) : null}
+                </View>
               </View>
             ) : null
           }
@@ -836,8 +1047,7 @@ export default function ShortlistScreen() {
                   <Text style={styles.paginationSummaryText}>
                     Showing{" "}
                     <Text style={styles.paginationBoldText}>
-                      {totalItems === 0 ? 0 : (currentPage - 1) * perPage + 1}
-                      -
+                      {totalItems === 0 ? 0 : (currentPage - 1) * perPage + 1}-
                       {Math.min(currentPage * perPage, totalItems)}
                     </Text>{" "}
                     of{" "}
@@ -881,49 +1091,51 @@ export default function ShortlistScreen() {
 
                     {/* Page Numbers */}
                     <View style={styles.pagePillsGroup}>
-                      {getPaginationRange(currentPage, totalPages).map((p, idx) => {
-                        if (p === "...") {
-                          const isLeftEllipsis = idx === 1;
-                          const targetPage = isLeftEllipsis
-                            ? Math.max(1, currentPage - 5)
-                            : Math.min(totalPages, currentPage + 5);
+                      {getPaginationRange(currentPage, totalPages).map(
+                        (p, idx) => {
+                          if (p === "...") {
+                            const isLeftEllipsis = idx === 1;
+                            const targetPage = isLeftEllipsis
+                              ? Math.max(1, currentPage - 5)
+                              : Math.min(totalPages, currentPage + 5);
+                            return (
+                              <TouchableOpacity
+                                key={`ellipsis_${idx}`}
+                                style={styles.ellipsisWrap}
+                                onPress={() => handlePageChange(targetPage)}
+                                disabled={pageLoading}
+                                activeOpacity={0.6}
+                              >
+                                <Text style={styles.ellipsisText}>•••</Text>
+                              </TouchableOpacity>
+                            );
+                          }
+
+                          const isCurrent = p === currentPage;
                           return (
                             <TouchableOpacity
-                              key={`ellipsis_${idx}`}
-                              style={styles.ellipsisWrap}
-                              onPress={() => handlePageChange(targetPage)}
-                              disabled={pageLoading}
-                              activeOpacity={0.6}
+                              key={`page_${p}`}
+                              style={[
+                                styles.pageNumberBtn,
+                                isCurrent && styles.pageNumberBtnActive,
+                                pageLoading && styles.pageNumberBtnLoading,
+                              ]}
+                              onPress={() => handlePageChange(p)}
+                              disabled={pageLoading || isCurrent}
+                              activeOpacity={0.7}
                             >
-                              <Text style={styles.ellipsisText}>•••</Text>
+                              <Text
+                                style={[
+                                  styles.pageNumberText,
+                                  isCurrent && styles.pageNumberTextActive,
+                                ]}
+                              >
+                                {p}
+                              </Text>
                             </TouchableOpacity>
                           );
-                        }
-
-                        const isCurrent = p === currentPage;
-                        return (
-                          <TouchableOpacity
-                            key={`page_${p}`}
-                            style={[
-                              styles.pageNumberBtn,
-                              isCurrent && styles.pageNumberBtnActive,
-                              pageLoading && styles.pageNumberBtnLoading,
-                            ]}
-                            onPress={() => handlePageChange(p)}
-                            disabled={pageLoading || isCurrent}
-                            activeOpacity={0.7}
-                          >
-                            <Text
-                              style={[
-                                styles.pageNumberText,
-                                isCurrent && styles.pageNumberTextActive,
-                              ]}
-                            >
-                              {p}
-                            </Text>
-                          </TouchableOpacity>
-                        );
-                      })}
+                        },
+                      )}
                     </View>
 
                     {/* Next Button */}
@@ -965,11 +1177,16 @@ export default function ShortlistScreen() {
             searchQuery.trim() ? (
               <View style={styles.emptyContainer}>
                 <View style={styles.emptyIconCircle}>
-                  <Ionicons name="search-outline" size={42} color={COLORS.primary} />
+                  <Ionicons
+                    name="search-outline"
+                    size={42}
+                    color={COLORS.primary}
+                  />
                 </View>
                 <Text style={styles.emptyTitle}>No Matching Profiles</Text>
                 <Text style={styles.emptySubtitle}>
-                  We could not find any shortlisted member matching &ldquo;{searchQuery}&rdquo;.
+                  We could not find any shortlisted member matching &ldquo;
+                  {searchQuery}&rdquo;.
                 </Text>
                 <TouchableOpacity
                   style={styles.exploreBtn}
@@ -984,7 +1201,9 @@ export default function ShortlistScreen() {
                 <View style={styles.emptyIconCircle}>
                   <Ionicons name="star-outline" size={44} color="#D97706" />
                 </View>
-                <Text style={styles.emptyTitle}>No Shortlisted Profiles Yet</Text>
+                <Text style={styles.emptyTitle}>
+                  No Shortlisted Profiles Yet
+                </Text>
                 <Text style={styles.emptySubtitle}>
                   When you browse Active Members, tap the Star icon to bookmark
                   and compare candidate profiles here.
@@ -1019,62 +1238,25 @@ const styles = StyleSheet.create({
     backgroundColor: "#F9F6F4",
   },
 
-  /* Header Group */
-  headerTopRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-  headerTitleGroup: {
-    flex: 1,
-  },
-  titleWithBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-  },
-  title: {
-    fontSize: 22,
-    fontFamily: FONTS.bold,
-    color: COLORS.text,
-    letterSpacing: -0.3,
-  },
-  countBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#FEF3C7",
-    paddingHorizontal: 9,
-    paddingVertical: 3.5,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: "#FDE68A",
-  },
-  countBadgeText: {
-    fontSize: 11.5,
-    fontFamily: FONTS.bold,
-    color: "#92400E",
-  },
-  subtitle: {
-    fontSize: 12.5,
-    fontFamily: FONTS.regular,
-    color: COLORS.textLight,
-    marginTop: 2,
-  },
-
   /* Search Bar */
   searchBarContainer: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#FAF5F2",
-    borderRadius: 12,
+    backgroundColor: "#fff",
+    borderRadius: 14,
     borderWidth: 1,
     borderColor: "#EAE0DA",
-    paddingHorizontal: 12,
-    height: 42,
+    paddingHorizontal: 13,
+    height: 46,
     marginTop: 12,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 3,
+    elevation: 1,
   },
   searchIcon: {
-    marginRight: 8,
+    marginRight: 9,
   },
   searchInput: {
     flex: 1,
@@ -1085,6 +1267,47 @@ const styles = StyleSheet.create({
   },
   clearSearchBtn: {
     padding: 4,
+  },
+
+  /* Summary tiles */
+  statsRow: {
+    flexDirection: "row",
+    gap: 10,
+    marginBottom: 14,
+  },
+  statTile: {
+    flex: 1,
+    backgroundColor: "#fff",
+    borderRadius: 16,
+    paddingVertical: 11,
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "#EFE8E3",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 4,
+    elevation: 1,
+  },
+  statIcon: {
+    width: 28,
+    height: 28,
+    borderRadius: 9,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 6,
+  },
+  statNumber: {
+    fontSize: 17,
+    fontFamily: FONTS.bold,
+    color: COLORS.text,
+    lineHeight: 21,
+  },
+  statLabel: {
+    fontSize: 10.5,
+    fontFamily: FONTS.medium,
+    color: COLORS.textLight,
+    marginTop: 1,
   },
 
   /* Results Strip */
@@ -1119,16 +1342,69 @@ const styles = StyleSheet.create({
   /* Member Card */
   card: {
     backgroundColor: "#fff",
-    borderRadius: 18,
+    borderRadius: 20,
     padding: 14,
     marginBottom: 14,
     borderWidth: 1,
     borderColor: "#EFE8E3",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 6,
-    elevation: 2,
+    borderLeftWidth: 4,
+    shadowColor: "#2B1B14",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.07,
+    shadowRadius: 10,
+    elevation: 3,
+  },
+  cardHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingBottom: 11,
+    marginBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: "#F3EEEA",
+    gap: 8,
+  },
+  cardHeaderLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    flex: 1,
+    flexWrap: "wrap",
+    gap: 6,
+  },
+  savedTag: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#FEF3C7",
+    borderWidth: 1,
+    borderColor: "#FDE68A",
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: 10,
+  },
+  savedTagText: {
+    fontSize: 10.5,
+    fontFamily: FONTS.bold,
+    color: "#92400E",
+  },
+  stateTag: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: 10,
+    borderWidth: 1,
+  },
+  stateTagAccepted: {
+    backgroundColor: "#DCFCE7",
+    borderColor: "#BBF7D0",
+  },
+  stateTagSent: {
+    backgroundColor: "#ECFDF5",
+    borderColor: "#A7F3D0",
+  },
+  stateTagText: {
+    fontSize: 10.5,
+    fontFamily: FONTS.bold,
   },
   cardTopRow: {
     flexDirection: "row",
@@ -1138,9 +1414,9 @@ const styles = StyleSheet.create({
   /* Portrait Photo */
   photoContainer: {
     position: "relative",
-    width: 82,
-    height: 98,
-    borderRadius: 14,
+    width: 92,
+    height: 120,
+    borderRadius: 16,
     overflow: "hidden",
     backgroundColor: "#FCE7F3",
   },
@@ -1149,42 +1425,30 @@ const styles = StyleSheet.create({
     height: "100%",
     resizeMode: "cover",
   },
-  photoFallback: {
-    width: "100%",
-    height: "100%",
-    backgroundColor: "#2B2D42",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  photoInitial: {
-    color: "#fff",
-    fontSize: 28,
-    fontFamily: FONTS.bold,
-  },
   planBadge: {
     position: "absolute",
-    bottom: 5,
-    left: 5,
-    right: 5,
+    bottom: 6,
+    left: 6,
+    right: 6,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: 2,
+    paddingVertical: 3,
     paddingHorizontal: 4,
-    borderRadius: 6,
+    borderRadius: 8,
   },
   planPremium: {
-    backgroundColor: "#E11D48",
+    backgroundColor: "rgba(225,29,72,0.92)",
   },
   planFree: {
-    backgroundColor: "#475569",
+    backgroundColor: "rgba(71,85,105,0.92)",
   },
   planBadgeText: {
     color: "#fff",
     fontSize: 8.5,
     fontFamily: FONTS.bold,
     textTransform: "uppercase",
-    letterSpacing: 0.4,
+    letterSpacing: 0.5,
   },
 
   /* Info Column */
@@ -1192,28 +1456,27 @@ const styles = StyleSheet.create({
     flex: 1,
     marginLeft: 14,
   },
-  nameHeaderRow: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    justifyContent: "space-between",
-  },
   cardName: {
-    fontSize: 16,
+    fontSize: 17,
     fontFamily: FONTS.bold,
     color: COLORS.text,
     letterSpacing: -0.2,
   },
   cardAge: {
     fontFamily: FONTS.medium,
+    fontSize: 14,
     color: COLORS.textLight,
   },
   idBadgeRow: {
+    flexDirection: "row",
+    alignItems: "center",
     alignSelf: "flex-start",
     backgroundColor: "#F1F5F9",
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 6,
-    marginTop: 3,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 7,
+    marginTop: 4,
+    gap: 3,
   },
   idBadgeText: {
     fontSize: 10.5,
@@ -1221,9 +1484,9 @@ const styles = StyleSheet.create({
     color: "#475569",
   },
   trashBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
+    width: 34,
+    height: 34,
+    borderRadius: 10,
     backgroundColor: "#FEF2F2",
     alignItems: "center",
     justifyContent: "center",
@@ -1231,58 +1494,78 @@ const styles = StyleSheet.create({
     borderColor: "#FEE2E2",
   },
 
-  /* Attribute Chips */
+  /* Quick fact chips */
   chipsRow: {
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 5,
-    marginTop: 8,
+    marginTop: 9,
   },
   chip: {
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: "#FFF5F7",
-    paddingHorizontal: 7,
-    paddingVertical: 3,
-    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 3.5,
+    borderRadius: 9,
     borderWidth: 1,
     borderColor: "#FFE4E8",
     maxWidth: "100%",
   },
   chipText: {
     fontSize: 11,
-    fontFamily: FONTS.medium,
+    fontFamily: FONTS.semiBold,
     color: "#4A3E3D",
-    marginLeft: 3.5,
+    marginLeft: 4,
   },
 
-  /* Card Divider */
-  cardDivider: {
-    height: 1,
-    backgroundColor: "#F3EEEA",
-    marginVertical: 12,
+  /* Detail lines */
+  infoLines: {
+    marginTop: 8,
+    gap: 5,
+  },
+  infoLine: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  infoLineIcon: {
+    width: 20,
+    height: 20,
+    borderRadius: 7,
+    backgroundColor: "#FFF5F7",
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 7,
+  },
+  infoLineText: {
+    flex: 1,
+    fontSize: 12,
+    fontFamily: FONTS.medium,
+    color: "#4A3E3D",
   },
 
   /* Actions Grid */
   actionsGrid: {
     flexDirection: "row",
-    gap: 10,
+    gap: 8,
+    marginTop: 14,
   },
   actionBtn: {
     flex: 1,
-    height: 38,
-    borderRadius: 10,
+    height: 44,
+    borderRadius: 13,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
+    paddingHorizontal: 6,
   },
   sendInterestBtn: {
     backgroundColor: COLORS.primary,
     shadowColor: COLORS.primary,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 3,
-    elevation: 2,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.3,
+    shadowRadius: 5,
+    elevation: 3,
   },
   sendInterestText: {
     color: "#fff",
@@ -1297,32 +1580,29 @@ const styles = StyleSheet.create({
     color: "#065F46",
     fontFamily: FONTS.semiBold,
   },
-  viewProfileBtn: {
-    backgroundColor: "#FAF5F2",
+  interestAcceptedBtn: {
+    backgroundColor: "#DCFCE7",
     borderWidth: 1,
-    borderColor: "#EADFD8",
+    borderColor: "#86EFAC",
+  },
+  interestAcceptedText: {
+    color: "#15803D",
+    fontFamily: FONTS.bold,
+  },
+  viewProfileBtn: {
+    backgroundColor: "#FFF5F7",
+    borderWidth: 1,
+    borderColor: "#FFD9E0",
   },
   viewProfileText: {
-    color: COLORS.text,
-    fontFamily: FONTS.semiBold,
+    color: COLORS.primary,
+    fontFamily: FONTS.bold,
   },
   actionBtnText: {
-    fontSize: 12.5,
+    fontSize: 13,
   },
 
   /* Empty State */
-  centerBox: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    padding: 24,
-  },
-  loadingText: {
-    marginTop: 12,
-    fontSize: 13,
-    fontFamily: FONTS.medium,
-    color: COLORS.textLight,
-  },
   emptyContainer: {
     alignItems: "center",
     justifyContent: "center",
@@ -1330,20 +1610,20 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
   },
   emptyIconCircle: {
-    width: 86,
-    height: 86,
-    borderRadius: 43,
+    width: 96,
+    height: 96,
+    borderRadius: 48,
     backgroundColor: "#FEF3C7",
     borderWidth: 1,
     borderColor: "#FDE68A",
     alignItems: "center",
     justifyContent: "center",
-    marginBottom: 18,
+    marginBottom: 20,
     shadowColor: "#F59E0B",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.12,
-    shadowRadius: 8,
-    elevation: 3,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.16,
+    shadowRadius: 10,
+    elevation: 4,
   },
   emptyTitle: {
     fontSize: 19,
@@ -1365,14 +1645,14 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: COLORS.primary,
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    borderRadius: 14,
+    paddingHorizontal: 22,
+    paddingVertical: 13,
+    borderRadius: 15,
     shadowColor: COLORS.primary,
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.25,
-    shadowRadius: 5,
-    elevation: 3,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.28,
+    shadowRadius: 6,
+    elevation: 4,
   },
   exploreBtnText: {
     color: "#fff",
@@ -1383,18 +1663,18 @@ const styles = StyleSheet.create({
   /* Pagination Card */
   paginationCard: {
     backgroundColor: "#fff",
-    borderRadius: 14,
+    borderRadius: 18,
     paddingVertical: 14,
     paddingHorizontal: 12,
-    marginTop: 6,
+    marginTop: 4,
     marginBottom: 24,
     borderWidth: 1,
     borderColor: "#F1E8E2",
     alignItems: "center",
     shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.04,
-    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 6,
     elevation: 2,
   },
   paginationSummaryRow: {
@@ -1422,8 +1702,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 10,
-    height: 32,
-    borderRadius: 8,
+    height: 34,
+    borderRadius: 10,
     backgroundColor: "#F8FAFC",
     borderWidth: 1,
     borderColor: "#E2E8F0",
@@ -1450,9 +1730,9 @@ const styles = StyleSheet.create({
     flexWrap: "wrap",
   },
   pageNumberBtn: {
-    minWidth: 30,
-    height: 30,
-    borderRadius: 6,
+    minWidth: 32,
+    height: 32,
+    borderRadius: 10,
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: "#F8FAFC",
@@ -1463,6 +1743,11 @@ const styles = StyleSheet.create({
   pageNumberBtnActive: {
     backgroundColor: COLORS.primary,
     borderColor: COLORS.primary,
+    shadowColor: COLORS.primary,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 2,
   },
   pageNumberBtnLoading: {
     opacity: 0.6,
@@ -1495,7 +1780,7 @@ const styles = StyleSheet.create({
     marginHorizontal: 16,
     marginTop: 8,
     marginBottom: 4,
-    borderRadius: 10,
+    borderRadius: 12,
     gap: 8,
   },
   pageLoadingText: {

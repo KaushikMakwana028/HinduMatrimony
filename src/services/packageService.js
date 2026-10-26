@@ -17,40 +17,189 @@ export function normalizePackageImageUrl(path) {
     return `https://hindumatrimony.org.in/${trimmed}`;
 }
 
+/**
+ * Clean HTML strings into readable plain-text instructions
+ */
+export function cleanHtmlText(html = '') {
+    if (!html || typeof html !== 'string') return '';
+    return html
+        .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+        .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+        .replace(/<br\s*[\/]?>/gi, '\n')
+        .replace(/<\/p>/gi, '\n\n')
+        .replace(/<\/div>/gi, '\n')
+        .replace(/<\/li>/gi, '\n')
+        .replace(/<li[^>]*>/gi, '• ')
+        .replace(/<h[1-6][^>]*>/gi, '\n')
+        .replace(/<\/h[1-6]>/gi, '\n')
+        .replace(/<[^>]+>/g, '')
+        .replace(/&nbsp;/gi, ' ')
+        .replace(/&amp;/gi, '&')
+        .replace(/&quot;/gi, '"')
+        .replace(/&#39;/gi, "'")
+        .replace(/&lt;/gi, '<')
+        .replace(/&gt;/gi, '>')
+        .replace(/[ \t]+/g, ' ')
+        .replace(/\n\s*\n\s*\n/g, '\n\n')
+        .trim();
+}
+
+/**
+ * Extract QR code image URL from payment description HTML
+ */
+export function extractQrCodeUrl(html = '', photo = null) {
+    if (html && typeof html === 'string') {
+        const match = html.match(/<img[^>]+src=["']([^"']+)["']/i);
+        if (match && match[1]) {
+            return normalizePackageImageUrl(match[1]);
+        }
+    }
+    if (photo && typeof photo === 'string') {
+        const trimmed = photo.trim();
+        if (trimmed.startsWith('http') || trimmed.includes('/') || trimmed.endsWith('.jpg') || trimmed.endsWith('.png')) {
+            return normalizePackageImageUrl(trimmed);
+        }
+    }
+    return '';
+}
+
+let cachedPackages = null;
+let cachedPackagesTime = 0;
+let inFlightPackagesPromise = null;
+const PACKAGES_CACHE_TTL = 120000; // 2 minutes
+
 const packageService = {
     /**
      * Get list of available packages/plans
      * GET https://hindumatrimony.org.in/api/home/packages
      *
      * @param {string} [token]
+     * @param {boolean} [forceRefresh=false]
      * @returns {Promise<Array>}
      */
-    async getPackages(token = null) {
-        const response = await apiClient.get(ENDPOINTS.PACKAGES_LIST, { token });
-
-        if (response && response.result === false) {
-            throw new ApiError(response.message || 'Failed to load membership packages', 400, response);
+    async getPackages(token = null, forceRefresh = false) {
+        const now = Date.now();
+        if (!forceRefresh && cachedPackages && now - cachedPackagesTime < PACKAGES_CACHE_TTL) {
+            return cachedPackages;
         }
 
-        const rawList = Array.isArray(response)
-            ? response
-            : Array.isArray(response?.data)
-                ? response.data
-                : [];
+        if (!forceRefresh && inFlightPackagesPromise) {
+            return inFlightPackagesPromise;
+        }
 
-        return rawList.map((pkg) => ({
-            id: pkg.id,
-            name: pkg.name || 'Membership Plan',
-            price: Number(pkg.price ?? 0),
-            image: normalizePackageImageUrl(pkg.image),
-            express_interest: pkg.express_interest ?? 0,
-            photo_gallery: pkg.photo_gallery ?? 0,
-            contact: pkg.contact ?? 0,
-            profile_view: pkg.profile_view ?? 0,
-            validity: pkg.validity ?? 30,
-            auto_profile_match: Boolean(pkg.auto_profile_match),
-            raw: pkg,
-        }));
+        inFlightPackagesPromise = (async () => {
+            try {
+                const response = await apiClient.get(ENDPOINTS.PACKAGES_LIST, { token, timeout: 15000 });
+
+                if (response && response.result === false) {
+                    throw new ApiError(response.message || 'Failed to load membership packages', 400, response);
+                }
+
+                const rawList = Array.isArray(response)
+                    ? response
+                    : Array.isArray(response?.data)
+                        ? response.data
+                        : [];
+
+                const mapped = rawList.map((pkg) => ({
+                    id: pkg.package_id ?? pkg.id,
+                    package_id: pkg.package_id ?? pkg.id,
+                    name: pkg.name || 'Membership Plan',
+                    price: Number(pkg.price ?? 0),
+                    price_text: pkg.price_text || `₹${pkg.price ?? 0}`,
+                    image: normalizePackageImageUrl(pkg.image),
+                    express_interest: Number(pkg.express_interest ?? 0),
+                    photo_gallery: Number(pkg.photo_gallery ?? 0),
+                    contact: Number(pkg.contact ?? 0),
+                    profile_view: Number(pkg.profile_viewers_view ?? pkg.profile_view ?? 0),
+                    profile_viewers_view: Number(pkg.profile_viewers_view ?? pkg.profile_view ?? 0),
+                    profile_image_view: Number(pkg.profile_image_view ?? 0),
+                    gallery_image_view: Number(pkg.gallery_image_view ?? 0),
+                    validity: Number(pkg.validity ?? 30),
+                    auto_profile_match: Boolean(pkg.auto_profile_match),
+                    raw: pkg,
+                }));
+
+                if (mapped.length > 0) {
+                    cachedPackages = mapped;
+                    cachedPackagesTime = Date.now();
+                }
+
+                return mapped;
+            } finally {
+                inFlightPackagesPromise = null;
+            }
+        })();
+
+        return inFlightPackagesPromise;
+    },
+
+    /**
+     * Get payment methods for a package
+     * GET https://hindumatrimony.org.in/api/package-payment-methods/:id
+     *
+     * @param {number|string} packageId
+     * @param {string} [token]
+     * @returns {Promise<{ package: Object, manual_payments: Array }>}
+     */
+    async getPackagePaymentMethods(packageId, token = null) {
+        if (!packageId) {
+            throw new ApiError('Package ID is required to fetch payment methods', 400);
+        }
+
+        const endpoint = ENDPOINTS.PACKAGE_PAYMENT_METHODS(packageId);
+        const response = await apiClient.get(endpoint, { token });
+
+        if (response && response.result === false) {
+            throw new ApiError(response.message || 'Failed to load payment methods', 400, response);
+        }
+
+        const pkg = response?.package || {};
+        const rawPayments = Array.isArray(response?.manual_payments)
+            ? response.manual_payments
+            : [];
+
+        const manualPayments = rawPayments.map((item) => {
+            const descriptionHtml = item.description || '';
+            const qrImageUrl = extractQrCodeUrl(descriptionHtml, item.photo);
+            const cleanDescription = cleanHtmlText(descriptionHtml);
+
+            return {
+                id: item.id,
+                type: item.type || 'custom_payment',
+                heading: item.heading || 'Offline Payment',
+                description: descriptionHtml,
+                cleanDescription,
+                qrImageUrl,
+                bank_info: item.bank_info,
+                photo: item.photo,
+                created_at: item.created_at,
+                updated_at: item.updated_at,
+                raw: item,
+            };
+        });
+
+        return {
+            package: {
+                id: pkg.id || packageId,
+                name: pkg.name || 'Membership Plan',
+                price: Number(pkg.price ?? 0),
+                price_text: pkg.price_text || `₹${pkg.price ?? 0}`,
+                validity: Number(pkg.validity ?? 30),
+                express_interest: Number(pkg.express_interest ?? 0),
+                photo_gallery: Number(pkg.photo_gallery ?? 0),
+                contact: Number(pkg.contact ?? 0),
+                profile_viewers_view: Number(pkg.profile_viewers_view ?? 0),
+                profile_image_view: Number(pkg.profile_image_view ?? 0),
+                gallery_image_view: Number(pkg.gallery_image_view ?? 0),
+                auto_profile_match: Boolean(pkg.auto_profile_match),
+                image: normalizePackageImageUrl(pkg.image),
+                active: pkg.active,
+                raw: pkg,
+            },
+            manual_payments: manualPayments,
+            raw: response,
+        };
     },
 
     /**
@@ -60,10 +209,10 @@ const packageService = {
      * - package_id: 1
      * - amount: 999
      * - payment_method: manual_payment
-     * - manual_payment_id: 2
+     * - manual_payment_id: 3 (or 2)
      * - transaction_id: "TXN123456"
      * - payment_details: "Paid via bank transfer"
-     * - payment_proof: file
+     * - payment_proof: file (image/pdf)
      *
      * @param {Object} params
      * @param {string} token
@@ -77,7 +226,7 @@ const packageService = {
             package_id,
             amount,
             payment_method = 'manual_payment',
-            manual_payment_id = 2,
+            manual_payment_id = 3,
             transaction_id,
             payment_details,
             payment_proof,
@@ -101,13 +250,21 @@ const packageService = {
 
         const uri = payment_proof.uri;
         const uriParts = uri.split('/');
-        const fileName = payment_proof.fileName || uriParts[uriParts.length - 1] || `payment_proof_${Date.now()}.jpg`;
+        const rawFileName =
+            payment_proof.fileName ||
+            payment_proof.name ||
+            uriParts[uriParts.length - 1] ||
+            `payment_proof_${Date.now()}.jpg`;
+        const fileName = rawFileName.replace(/[^a-zA-Z0-9._-]/g, '_');
 
         let mimeType = payment_proof.mimeType;
         if (!mimeType) {
-            const match = /\.(\w+)$/.exec(fileName);
+            const match = /\.([a-zA-Z0-9]+)$/.exec(fileName);
             const ext = match ? match[1].toLowerCase() : 'jpg';
-            mimeType = ext === 'png' ? 'image/png' : ext === 'pdf' ? 'application/pdf' : 'image/jpeg';
+            if (ext === 'png') mimeType = 'image/png';
+            else if (ext === 'webp') mimeType = 'image/webp';
+            else if (ext === 'pdf') mimeType = 'application/pdf';
+            else mimeType = 'image/jpeg';
         }
 
         const response = await apiClient.uploadFile(

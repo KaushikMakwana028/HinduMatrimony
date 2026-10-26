@@ -1,10 +1,12 @@
 const API_CONFIG = {
     BASE_URL: 'https://hindumatrimony.org.in/api',
-    TIMEOUT: 60000,
+    TIMEOUT: 20000,
     ENDPOINTS: {
         SIGNUP: '/signup',
         SIGNIN: '/signin',
         LOGOUT: '/logout',
+        FORGOT_PASSWORD: '/forgot/password',
+        RESET_PASSWORD: '/reset/password',
         MEMBER_DASHBOARD: '/member/dashboard',
         MEMBER_PROFILE: (id) => `/member/public-profile/${id}`,
         MEMBER_PROFILE_SETTINGS: '/member/profile-settings',
@@ -47,6 +49,7 @@ const API_CONFIG = {
         MEMBER_HAPPY_STORY: '/member/happy-story',
         MEMBER_CHECK_HAPPY_STORY: '/member/check-happy-story',
         PACKAGES_LIST: '/home/packages',
+        PACKAGE_PAYMENT_METHODS: (id) => `/package-payment-methods/${id}`,
         PACKAGE_PURCHASE: '/member/package-purchase',
         PACKAGE_PURCHASE_HISTORY: '/member/package-purchase-history',
         PACKAGE_PURCHASE_INVOICE: '/member/package-purchase-history-invoice',

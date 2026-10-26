@@ -23,6 +23,7 @@ import { Ionicons } from "@expo/vector-icons";
 import ScreenHeader from "../components/ScreenHeader";
 import { useAuth } from "../contexts/AuthContext";
 import ignoreService from "../services/ignoreService";
+import memberStateService from "../services/memberStateService";
 import {
   subscribeMemberAction,
   emitMemberAction,
@@ -59,116 +60,6 @@ function getPaginationRange(currentPage, totalPages) {
     "...",
     totalPages,
   ];
-}
-
-/**
- * Resolves membership plan (Premium vs Free badge)
- */
-function getMemberPlan(item) {
-  if (!item) return "Free";
-
-  let userObj = item.user;
-  if (typeof userObj === "string") {
-    try {
-      userObj = JSON.parse(userObj);
-    } catch {}
-  }
-  if (!userObj || typeof userObj !== "object") userObj = null;
-
-  // 1. Textual package names check
-  const candidates = [
-    item.package_name,
-    userObj?.package_name,
-    item.package?.name,
-    userObj?.package?.name,
-    item.current_package_name,
-    userObj?.current_package_name,
-    item.current_package_info?.package_name,
-    userObj?.current_package_info?.package_name,
-    item.package_info?.package_name,
-    userObj?.package_info?.package_name,
-    item.member_plan,
-    userObj?.member_plan,
-    item.plan,
-    userObj?.plan,
-    typeof item.package === "string" ? item.package : "",
-    typeof userObj?.package === "string" ? userObj?.package : "",
-  ];
-
-  for (const c of candidates) {
-    if (!c) continue;
-    const str = String(c).trim().toLowerCase();
-    if (
-      str.includes("premium") ||
-      str.includes("gold") ||
-      str.includes("silver") ||
-      str.includes("platinum") ||
-      str.includes("vip") ||
-      str.includes("diamond") ||
-      str.includes("pro") ||
-      str.includes("paid")
-    ) {
-      return "Premium";
-    }
-  }
-
-  // 2. Numeric package_id (> 1 means paid/premium package in Active Matrimonial CMS)
-  const pkgIds = [
-    item.package_id,
-    userObj?.package_id,
-    item.current_package_id,
-    userObj?.current_package_id,
-    item.package?.id,
-    userObj?.package?.id,
-  ];
-  for (const pid of pkgIds) {
-    const num = Number(pid);
-    if (Number.isFinite(num) && num > 1) {
-      return "Premium";
-    }
-  }
-
-  // 3. Membership status (>= 2 is paid/premium in Active Matrimonial CMS)
-  const memVals = [
-    item.membership,
-    userObj?.membership,
-    item.membership_type,
-    userObj?.membership_type,
-    item.member_type,
-    userObj?.member_type,
-  ];
-  for (const m of memVals) {
-    const num = Number(m);
-    if (Number.isFinite(num) && num >= 2) {
-      return "Premium";
-    }
-    if (typeof m === "string") {
-      const lower = m.toLowerCase();
-      if (
-        lower.includes("paid") ||
-        lower.includes("premium") ||
-        lower.includes("silver") ||
-        lower.includes("gold") ||
-        lower.includes("platinum")
-      ) {
-        return "Premium";
-      }
-    }
-  }
-
-  // 4. Boolean or flag checks
-  if (
-    item.is_premium === true ||
-    item.is_premium === 1 ||
-    item.is_premium === "1" ||
-    userObj?.is_premium === true ||
-    userObj?.is_premium === 1 ||
-    userObj?.is_premium === "1"
-  ) {
-    return "Premium";
-  }
-
-  return "Free";
 }
 
 /**
@@ -229,11 +120,13 @@ function formatIgnoredMember(item, index) {
     userObj?.location ||
     "";
 
+  const resolvedCode = memberStateService.resolveMemberCode(item);
+
   return {
     id: id,
     userId: item.user_id || userObj?.id || id,
     name: name,
-    memberId: String(
+    memberId: resolvedCode || String(
       item.code ||
         userObj?.code ||
         item.member_code ||
@@ -241,7 +134,7 @@ function formatIgnoredMember(item, index) {
         `HM-${id}`,
     ),
     photo: finalPhoto,
-    plan: getMemberPlan(item),
+    plan: memberStateService.resolvePlan(item),
     age: item.age || userObj?.age || item.birthday || "",
     height: item.height || userObj?.height
       ? String(item.height || userObj?.height).includes("ft")
@@ -462,14 +355,23 @@ export default function IgnoredUsersScreen() {
 
   // Open Full Member Profile
   const handleViewProfile = (member) => {
+    const status = memberStateService.getInterestStatus(member.userId || member.id || member.memberId);
+    const isAccepted = status === "Accepted";
+    const isRejected = status === "Rejected";
+    const isSent = !isRejected && (isAccepted || memberStateService.isInterestSent(member.userId || member.id || member.memberId));
+
     navigation.navigate("MemberProfile", {
       userId: member.userId,
+      interestStatus: isAccepted ? "Accepted" : isRejected ? "Rejected" : isSent ? "Pending" : null,
       member: {
+        id: member.userId,
         name: member.name,
         memberId: member.memberId,
         photo: member.photo,
         age: member.age,
         plan: member.plan,
+        interestSent: isSent,
+        interestStatus: isAccepted ? "Accepted" : isRejected ? "Rejected" : isSent ? "Pending" : null,
         ignored: true,
         summary: {
           height: member.height,
@@ -600,7 +502,7 @@ export default function IgnoredUsersScreen() {
                   />
                   <Text style={styles.chipText} numberOfLines={1}>
                     {item.religion}
-                    {item.caste ? ` • ${item.caste}` : ""}
+                    {item.caste ? ` â€¢ ${item.caste}` : ""}
                   </Text>
                 </View>
               ) : null}
@@ -694,7 +596,7 @@ export default function IgnoredUsersScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={["top", "left", "right"]}>
+    <SafeAreaView style={styles.safeArea} edges={["left", "right"]}>
       {/* ---------- STICKY HEADER ---------- */}
       <ScreenHeader
         title="Ignored Users"
@@ -868,7 +770,7 @@ export default function IgnoredUsersScreen() {
                                 disabled={pageLoading}
                                 activeOpacity={0.6}
                               >
-                                <Text style={styles.ellipsisText}>•••</Text>
+                                <Text style={styles.ellipsisText}>â€¢â€¢â€¢</Text>
                               </TouchableOpacity>
                             );
                           }

@@ -36,6 +36,7 @@ import {
   subscribeMemberAction,
 } from "../services/memberEvents";
 import planService from "../services/planService";
+import memberStateService from "../services/memberStateService";
 import { COLORS, FONTS, DEFAULT_AVATAR, DEFAULT_FEMALE_AVATAR } from "../theme";
 
 const SCREEN_W = Dimensions.get("window").width;
@@ -386,7 +387,7 @@ export default function MemberProfileScreen({ route, navigation }) {
   const routeUserId = route?.params?.userId;
   const seed = useMemo(
     () => route?.params?.member || {},
-    [route?.params?.member],
+    [route.params?.member],
   );
   const summary = seed.summary || {};
 
@@ -434,9 +435,17 @@ export default function MemberProfileScreen({ route, navigation }) {
   const [viewerPos, setViewerPos] = useState(0);
   const [viewerList, setViewerList] = useState([]);
 
-  const [interestSent, setInterestSent] = useState(!!seed.interestSent);
-  const [interestStatus, setInterestStatus] = useState(
-    seed.interestStatus || seed.status || route.params?.interestStatus || null,
+  const initialStatus =
+    route.params?.interestStatus ||
+    seed.interestStatus ||
+    memberStateService.getInterestStatus(userId) ||
+    memberStateService.getInterestStatus(seed.memberId);
+  const [interestStatus, setInterestStatus] = useState(initialStatus);
+  const [interestSent, setInterestSent] = useState(
+    initialStatus === "Accepted" ||
+      Boolean(seed.interestSent) ||
+      memberStateService.isInterestSent(userId) ||
+      memberStateService.isInterestSent(seed.memberId),
   );
   const [shortlisted, setShortlisted] = useState(!!seed.shortlisted);
   const [ignored, setIgnored] = useState(!!seed.ignored);
@@ -541,22 +550,60 @@ export default function MemberProfileScreen({ route, navigation }) {
           setProfile(res.value.data);
           setError(null);
 
-          // Update interest status if returned in profile
-          const rawStatus = String(
+          // Update interest status ONLY from explicit interest fields (NEVER data.status)!
+          const rawInterest = String(
             res.value.data.interest_status ||
               res.value.data.express_interest_status ||
-              res.value.data.status ||
               res.value.data.interest?.status ||
               "",
-          ).toLowerCase();
+          ).toLowerCase().trim();
+
           if (
-            rawStatus.includes("accept") ||
-            rawStatus.includes("approv") ||
-            rawStatus === "1"
+            rawInterest.includes("reject") ||
+            rawInterest.includes("decline") ||
+            rawInterest === "2"
+          ) {
+            setInterestStatus("Rejected");
+            setInterestSent(false);
+            memberStateService.setInterestStatus(userId, "Rejected");
+            memberStateService.setInterestSent(userId, false);
+          } else if (
+            rawInterest.includes("accept") ||
+            rawInterest.includes("approv") ||
+            (rawInterest === "1" && (res.value.data.interest_status !== undefined || res.value.data.express_interest_status !== undefined))
           ) {
             setInterestStatus("Accepted");
             setInterestSent(true);
+            memberStateService.setInterestStatus(userId, "Accepted");
+            memberStateService.setInterestSent(userId, true);
+          } else if (
+            rawInterest.includes("pending") ||
+            rawInterest.includes("sent") ||
+            res.value.data.hasExpressedInterest ||
+            res.value.data.interestSent ||
+            res.value.data.express_interest === 1 ||
+            res.value.data.express_interest === true
+          ) {
+            setInterestStatus("Pending");
+            setInterestSent(true);
+            memberStateService.setInterestStatus(userId, "Pending");
+            memberStateService.setInterestSent(userId, true);
+          } else {
+            setInterestStatus(null);
+            setInterestSent(false);
+            memberStateService.setInterestStatus(userId, null);
+            memberStateService.setInterestSent(userId, false);
           }
+          const codeVal =
+            res.value.data.basic_info?.code ||
+            res.value.data.code ||
+            seed.memberId ||
+            "";
+          memberStateService.registerMember({
+            ...res.value.data,
+            id: userId,
+            memberId: codeVal,
+          });
         } else {
           // If public-profile endpoint failed, but we have seed data from listing, don't show full error
           if (!hasProfile.current && !seed.name) {
@@ -579,7 +626,7 @@ export default function MemberProfileScreen({ route, navigation }) {
         }
       }
     },
-    [token, userId, seed.name],
+    [token, userId, seed.name, seed.memberId],
   );
 
   // Refresh when the screen gains focus + poll while focused
@@ -912,6 +959,13 @@ export default function MemberProfileScreen({ route, navigation }) {
   };
   /* ---------- Actions ---------- */
   const handleInterest = async () => {
+    if (isAccepted) {
+      Alert.alert(
+        "Connection Accepted 💖",
+        `You and ${fullName} have accepted each other's interest. You are officially connected!`,
+      );
+      return;
+    }
     if (interestSent) {
       Alert.alert(
         "Withdraw Interest",
@@ -923,6 +977,9 @@ export default function MemberProfileScreen({ route, navigation }) {
             style: "destructive",
             onPress: () => {
               setInterestSent(false);
+              setInterestStatus(null);
+              memberStateService.setInterestStatus(userId, null);
+              memberStateService.setInterestSent(userId, false);
               emitMemberAction({ userId, type: "interest", value: false });
               Alert.alert(
                 "Interest Removed",
@@ -938,6 +995,7 @@ export default function MemberProfileScreen({ route, navigation }) {
     try {
       const res = await activeMemberService.expressInterest(userId, token);
       setInterestSent(true);
+      memberStateService.setInterestSent(userId, true);
       emitMemberAction({ userId, type: "interest", value: true });
       Alert.alert(
         "Interest Sent 💖",
@@ -1081,7 +1139,10 @@ export default function MemberProfileScreen({ route, navigation }) {
   const showInitialLoader = loading && !profile;
   const showError = !!error && !profile;
 
-  const isAccepted = interestStatus === "Accepted";
+  const isAccepted =
+    interestStatus === "Accepted" ||
+    memberStateService.isInterestAccepted(userId) ||
+    memberStateService.isInterestAccepted(memberCode);
 
   const renderHero = () => (
     <View style={styles.hero}>
@@ -1149,7 +1210,11 @@ export default function MemberProfileScreen({ route, navigation }) {
 
   return (
     <View style={styles.root}>
-      <StatusBar barStyle="dark-content" />
+      <StatusBar
+        barStyle="dark-content"
+        backgroundColor="transparent"
+        translucent={true}
+      />
       <SafeAreaView edges={["top"]} style={styles.topBarSafe}>
         <View style={styles.topBar}>
           <TouchableOpacity
@@ -1219,7 +1284,12 @@ export default function MemberProfileScreen({ route, navigation }) {
                 <Text style={styles.verifiedPillText}>Verified</Text>
               </View>
               {(seed.plan === "Premium" ||
+                memberStateService.getPlan(userId) === "Premium" ||
+                memberStateService.getPlan(memberCode) === "Premium" ||
                 profile?.package_name?.toLowerCase().includes("silver") ||
+                profile?.package_name?.toLowerCase().includes("gold") ||
+                profile?.package_name?.toLowerCase().includes("diamond") ||
+                profile?.package_name?.toLowerCase().includes("platinum") ||
                 profile?.package_name?.toLowerCase().includes("premium") ||
                 profile?.package_id > 1 ||
                 profile?.membership >= 2 ||

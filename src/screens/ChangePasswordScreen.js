@@ -7,7 +7,6 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   Alert,
-  StatusBar,
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -99,10 +98,7 @@ export default function ChangePasswordScreen({ navigation }) {
   const passwordsMismatch = newPassword && confirmPassword && newPassword !== confirmPassword;
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={["top", "left", "right"]}>
-      <StatusBar barStyle="dark-content" />
-
-      {/* Header */}
+    <SafeAreaView style={styles.safeArea} edges={["left", "right"]}>
       {/* Header */}
       <ScreenHeader
         title="Change Password"

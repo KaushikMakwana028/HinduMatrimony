@@ -18,6 +18,7 @@ import {
 
 import RootNavigator from "./src/navigation/RootNavigator";
 import { AuthProvider } from "./src/contexts/AuthContext";
+import CustomAlert from "./src/components/CustomAlert";
 
 SplashScreen.preventAutoHideAsync();
 
@@ -53,8 +54,8 @@ export default function App() {
     <SafeAreaProvider initialMetrics={initialWindowMetrics}>
       <StatusBar
         style="dark"
-        backgroundColor={BACKGROUND}
-        translucent={false}
+        backgroundColor="transparent"
+        translucent={true}
       />
       <View
         style={{ flex: 1, backgroundColor: BACKGROUND }}
@@ -64,6 +65,7 @@ export default function App() {
           <NavigationContainer>
             <RootNavigator />
           </NavigationContainer>
+          <CustomAlert />
         </AuthProvider>
       </View>
     </SafeAreaProvider>
