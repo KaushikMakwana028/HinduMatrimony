@@ -8,6 +8,7 @@ import {
   Image,
   ActivityIndicator,
   Alert,
+  Switch,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -15,6 +16,9 @@ import * as ImagePicker from "expo-image-picker";
 import ScreenHeader from "../components/ScreenHeader";
 import KeyboardAwareScrollView from "../components/KeyboardAwareScrollView";
 import OptionPickerModal from "../components/OptionPickerModal";
+import TimePickerModal from "../components/TimePickerModal";
+import DatePickerModal from "../components/DatePickerModal";
+import EducationCareerModal from "../components/EducationCareerModal";
 import { useAuth } from "../contexts/AuthContext";
 import profileService from "../services/profileService";
 import memberService from "../services/memberService";
@@ -55,6 +59,10 @@ const GENDER_OPTIONS = [
 const BLOOD_GROUPS = ["A+", "A-", "B+", "B-", "O+", "O-", "AB+", "AB-"];
 const COMPLEXIONS = ["Very Fair", "Fair", "Wheatish", "Dusky", "Dark"];
 const BODY_TYPES = ["Slim", "Athletic", "Average", "Heavy"];
+const EYE_COLORS = ["Black", "Brown", "Hazel", "Blue", "Green", "Other"];
+const HAIR_COLORS = ["Black", "Brown", "Dark Brown", "Auburn", "Other"];
+const BODY_ARTS = ["None", "Tattoo", "Piercing", "Both", "Other"];
+const DISABILITIES = ["No", "Yes"];
 const DIETS = ["Vegetarian", "Non-Vegetarian", "Eggetarian", "Vegan", "Jain"];
 const HABIT_OPTIONS = ["No", "Occasionally", "Yes"];
 const LIVING_WITH = ["Family", "Alone", "Friends"];
@@ -65,8 +73,67 @@ const COMPLEXIONS_ANY = [...COMPLEXIONS, "Any"];
 const BODY_TYPES_ANY = [...BODY_TYPES, "Any"];
 const VALUES_ANY = [...PERSONAL_VALUES, "Any"];
 const DIETS_ANY = ["Vegetarian", "Non-Vegetarian", "Any"];
+const AFFECTION_OPTIONS = [
+  "High",
+  "Moderate",
+  "Low",
+  "Affectionate",
+  "Reserved",
+];
+const HUMOR_OPTIONS = [
+  "Witty",
+  "Friendly",
+  "Playful",
+  "Sarcastic",
+  "Dry",
+  "Light",
+];
+const POLITICAL_OPTIONS = [
+  "Moderate",
+  "Liberal",
+  "Conservative",
+  "Neutral",
+  "Zero Political Views",
+];
+const RELIGIOUS_SERVICE_OPTIONS = [
+  "Daily",
+  "Weekly",
+  "Monthly",
+  "Occasionally",
+  "During Festivals",
+  "Never",
+];
+const IMMIGRATION_STATUS_OPTIONS = [
+  "Citizen",
+  "Permanent Resident",
+  "Work Permit",
+  "Student Visa",
+  "Temporary Resident",
+];
 
 const has = (v) => v !== null && v !== undefined && v !== "";
+
+const normalizeGender = (value) => {
+  if (value === null || value === undefined || value === "") return "";
+
+  // API values may be strings, numeric IDs, or relation objects.
+  const raw =
+    typeof value === "object"
+      ? value.name ||
+        value.label ||
+        value.value ||
+        value.gender ||
+        value.id ||
+        ""
+      : value;
+
+  const gender = String(raw).trim().toLowerCase();
+
+  if (["male", "m", "man", "1"].includes(gender)) return "Male";
+  if (["female", "f", "woman", "2"].includes(gender)) return "Female";
+
+  return "";
+};
 
 // Turns an id, an {id, name} object, or a plain name ("Hindu") into the option id.
 // Returns null when nothing matches.
@@ -88,6 +155,70 @@ const resolveId = (list, value) => {
   // Object with an id that is not in the list (e.g. { id: 1, name: "My Self" })
   if (typeof value === "object" && has(value.id)) return value.id;
   return null;
+};
+
+const DEFAULT_LANGUAGES = [
+  { id: 1, name: "Gujrati" },
+  { id: 2, name: "Hindi" },
+  { id: 3, name: "Marathi" },
+  { id: 4, name: "Marwari" },
+  { id: 5, name: "English" },
+];
+
+const resolveLanguageId = (val, list = []) => {
+  if (!val) return 1;
+  if (typeof val === "number" && !isNaN(val)) return val;
+  if (typeof val === "object" && val !== null && val.id) return Number(val.id);
+  const str = String(val).trim();
+  if (/^\d+$/.test(str)) return parseInt(str, 10);
+  const fullList = list && list.length > 0 ? list : DEFAULT_LANGUAGES;
+  const match = fullList.find(
+    (l) => l.name && l.name.toLowerCase().trim() === str.toLowerCase(),
+  );
+  if (match) return match.id;
+  const fuzzy = fullList.find(
+    (l) =>
+      l.name &&
+      (l.name.toLowerCase().includes(str.toLowerCase().slice(0, 4)) ||
+        str.toLowerCase().includes(l.name.toLowerCase().slice(0, 4))),
+  );
+  if (fuzzy) return fuzzy.id;
+  return 1;
+};
+
+const resolveKnownLanguageIds = (rawKl, list = [], defaultId = 1) => {
+  const fullList = list && list.length > 0 ? list : DEFAULT_LANGUAGES;
+  const ids = [];
+
+  const addId = (val) => {
+    const id = resolveLanguageId(val, fullList);
+    if (id && !ids.includes(id)) {
+      ids.push(id);
+    }
+  };
+
+  if (Array.isArray(rawKl)) {
+    rawKl.forEach((item) => {
+      if (typeof item === "object" && item !== null && item.id) {
+        addId(item.id);
+      } else if (item) {
+        addId(item);
+      }
+    });
+  } else if (typeof rawKl === "string" && rawKl.trim()) {
+    const parts = rawKl
+      .split(/[,/]+/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    parts.forEach((p) => addId(p));
+  } else if (typeof rawKl === "number") {
+    addId(rawKl);
+  }
+
+  if (ids.length === 0) {
+    ids.push(defaultId || 1);
+  }
+  return ids;
 };
 
 /* -------------------------------------------------------------------------- */
@@ -225,9 +356,16 @@ function Field({
   missingText,
   multiline,
   style,
+  value,
   ...rest
 }) {
   const [focused, setFocused] = useState(false);
+  const safeValue =
+    typeof value === "object" && value !== null
+      ? value.name || value.title || value.label || ""
+      : value !== null && value !== undefined
+        ? String(value)
+        : "";
   return (
     <View style={styles.fieldWrap}>
       <FieldLabel label={label} required={required} />
@@ -239,6 +377,7 @@ function Field({
           missing && styles.inputMissing,
           style,
         ]}
+        value={safeValue}
         placeholderTextColor="#A8A29E"
         multiline={multiline}
         onFocus={() => setFocused(true)}
@@ -260,8 +399,16 @@ function SelectField({
   value,
   placeholder,
   onPress,
+  icon,
+  iconColor,
 }) {
-  const filled = Boolean(value);
+  const displayVal =
+    typeof value === "object" && value !== null
+      ? value.name || value.title || value.label || ""
+      : value !== null && value !== undefined
+        ? String(value)
+        : "";
+  const filled = Boolean(displayVal.trim());
   return (
     <View style={styles.fieldWrap}>
       <FieldLabel label={label} required={required} />
@@ -274,9 +421,13 @@ function SelectField({
           style={[styles.selectText, !filled && styles.selectPlaceholder]}
           numberOfLines={1}
         >
-          {filled ? value : placeholder}
+          {filled ? displayVal : placeholder}
         </Text>
-        <Ionicons name="chevron-down" size={18} color={COLORS.textLight} />
+        <Ionicons
+          name={icon || "chevron-down"}
+          size={18}
+          color={iconColor || COLORS.textLight}
+        />
       </TouchableOpacity>
       {missing ? (
         <MissingText text={missingText || `${label} is missing`} />
@@ -292,13 +443,23 @@ function ChipGroup({ label, options, value, onChange, segmented }) {
       <FieldLabel label={label} />
       <View style={segmented ? styles.segRow : styles.chipWrap}>
         {options.map((opt) => {
-          const v = typeof opt === "object" ? opt.value : opt;
-          const l = typeof opt === "object" ? opt.label : opt;
+          const v =
+            typeof opt === "object" && opt !== null
+              ? (opt.value ?? opt.id ?? opt.name)
+              : opt;
+          const l =
+            typeof opt === "object" && opt !== null
+              ? (opt.label ?? opt.name ?? opt.title ?? opt.value)
+              : opt;
+          const strL =
+            typeof l === "object" && l !== null
+              ? l.name || l.title || ""
+              : String(l ?? "");
           const active =
             String(value || "").toLowerCase() === String(v).toLowerCase();
           return (
             <TouchableOpacity
-              key={v}
+              key={String(v)}
               style={[
                 segmented ? styles.segBtn : styles.chip,
                 active && styles.chipActive,
@@ -315,7 +476,7 @@ function ChipGroup({ label, options, value, onChange, segmented }) {
                 />
               ) : null}
               <Text style={[styles.chipText, active && styles.chipTextActive]}>
-                {l}
+                {strL}
               </Text>
             </TouchableOpacity>
           );
@@ -369,15 +530,11 @@ function GroupTitle({ children }) {
 export default function EditProfileScreen({ navigation, route }) {
   const { user, token, updateUser } = useAuth();
   const routeSection = route?.params?.section;
-  const [prevRouteSection, setPrevRouteSection] = useState(routeSection);
-  const [expandedSection, setExpandedSection] = useState(
-    routeSection || "basic",
-  );
-
-  if (routeSection && routeSection !== prevRouteSection) {
-    setPrevRouteSection(routeSection);
-    setExpandedSection(routeSection);
-  }
+  const [userExpandedSection, setUserExpandedSection] = useState(undefined);
+  const expandedSection =
+    userExpandedSection !== undefined
+      ? userExpandedSection
+      : routeSection || "basic";
   const [loading, setLoading] = useState(false);
   const [savingSection, setSavingSection] = useState(null);
   const [memberCode, setMemberCode] = useState(user?.code || "");
@@ -436,6 +593,11 @@ export default function EditProfileScreen({ navigation, route }) {
     onSelect: null,
   });
 
+  // 12-Hour AM/PM Time Picker Modal State
+  const [timePickerVisible, setTimePickerVisible] = useState(false);
+  // Date of Birth Picker Modal State
+  const [dobPickerVisible, setDobPickerVisible] = useState(false);
+
   // Opens the picker; closes it automatically after a choice
   const openPicker = (title, options, selectedId, onPick) => {
     setPickerModal({
@@ -460,7 +622,7 @@ export default function EditProfileScreen({ navigation, route }) {
     return {
       first_name: parts[0] || "",
       last_name: parts.slice(1).join(" ") || "",
-      gender: user?.gender || "",
+      gender: normalizeGender(user?.gender),
       date_of_birth: "",
       marital_status: null,
       children: "",
@@ -491,17 +653,29 @@ export default function EditProfileScreen({ navigation, route }) {
     postal_code: "",
   });
 
+  // Education & Career Info
+  const [educations, setEducations] = useState([]);
+  const [careers, setCareers] = useState([]);
+  const [activeEduModal, setActiveEduModal] = useState({
+    visible: false,
+    item: null,
+  });
+  const [activeCarModal, setActiveCarModal] = useState({
+    visible: false,
+    item: null,
+  });
+
   // 5. Physical Attributes
   const [physical, setPhysical] = useState({
     height: "",
     weight: "",
-    eye_color: "",
-    hair_color: "",
-    complexion: "",
-    blood_group: "",
-    body_type: "",
-    body_art: "",
-    disability: "",
+    eye_color: "Black",
+    hair_color: "Black",
+    complexion: "Fair",
+    blood_group: "O+",
+    body_type: "Average",
+    body_art: "None",
+    disability: "No",
   });
 
   // 6. Language Details
@@ -652,15 +826,30 @@ export default function EditProfileScreen({ navigation, route }) {
     [serverSettings],
   );
   const languageList = useMemo(
-    () => serverSettings?.languages || [],
+    () =>
+      serverSettings?.languages?.length
+        ? serverSettings.languages
+        : DEFAULT_LANGUAGES,
     [serverSettings],
   );
 
   // Helpers to get display names
   const getOptionName = (list, id, fallback = "") => {
     if (!id) return fallback;
-    const item = (list || []).find((x) => String(x.id) === String(id));
-    return item ? item.name : fallback || String(id);
+    if (typeof id === "object" && id !== null) {
+      if (typeof id.name === "string" && id.name.trim()) return id.name.trim();
+      if (typeof id.title === "string" && id.title.trim())
+        return id.title.trim();
+      if (typeof id.label === "string" && id.label.trim())
+        return id.label.trim();
+      if (id.id !== undefined && id.id !== null) {
+        id = id.id;
+      }
+    }
+    const target = String(id).trim();
+    const item = (list || []).find((x) => String(x.id) === target);
+    if (item && item.name) return String(item.name);
+    return fallback || (typeof id === "object" ? "" : target);
   };
 
   // Calculate missing fields in Basic Information
@@ -872,7 +1061,9 @@ export default function EditProfileScreen({ navigation, route }) {
               ...prev,
               first_name: b.first_name || b.firs_name || prev.first_name,
               last_name: b.last_name || prev.last_name,
-              gender: b.gender || prev.gender,
+              gender: normalizeGender(
+                b.gender ?? d.gender ?? d.member?.gender ?? prev.gender,
+              ),
               date_of_birth:
                 b.date_of_birth || b.birthday || prev.date_of_birth,
               marital_status: maritalId ?? prev.marital_status,
@@ -911,6 +1102,28 @@ export default function EditProfileScreen({ navigation, route }) {
             setPermanentAddress((prev) => ({ ...prev, ...fields }));
           }
 
+          // Education Info
+          if (Array.isArray(d.education)) {
+            setEducations(d.education);
+          }
+
+          // Career Info
+          if (Array.isArray(d.career)) {
+            setCareers(d.career);
+          }
+
+          // Fetch fresh education & career records from API
+          try {
+            const [freshEdu, freshCar] = await Promise.all([
+              memberService.getEducations(token).catch(() => null),
+              memberService.getCareers(token).catch(() => null),
+            ]);
+            if (isMounted) {
+              if (Array.isArray(freshEdu)) setEducations(freshEdu);
+              if (Array.isArray(freshCar)) setCareers(freshCar);
+            }
+          } catch (_) {}
+
           // Physical
           if (d.physical_attributes) {
             const p = d.physical_attributes;
@@ -924,13 +1137,13 @@ export default function EditProfileScreen({ navigation, route }) {
                 p.weight !== null && p.weight !== undefined
                   ? String(p.weight)
                   : prev.weight || "",
-              eye_color: p.eye_color || prev.eye_color,
-              hair_color: p.hair_color || prev.hair_color,
-              complexion: p.complexion || prev.complexion,
-              blood_group: p.blood_group || prev.blood_group,
-              body_type: p.body_type || prev.body_type,
-              body_art: p.body_art || prev.body_art,
-              disability: p.disability || prev.disability,
+              eye_color: p.eye_color || prev.eye_color || "Black",
+              hair_color: p.hair_color || prev.hair_color || "Black",
+              complexion: p.complexion || prev.complexion || "Fair",
+              blood_group: p.blood_group || prev.blood_group || "O+",
+              body_type: p.body_type || prev.body_type || "Average",
+              body_art: p.body_art || prev.body_art || "None",
+              disability: p.disability || prev.disability || "No",
             }));
           }
 
@@ -940,13 +1153,34 @@ export default function EditProfileScreen({ navigation, route }) {
             d.known_languages ||
             d.basic_info?.mothere_tongue
           ) {
+            const rawMt = d.mother_tongue || d.basic_info?.mothere_tongue;
+            const mtVal =
+              typeof rawMt === "object" && rawMt !== null
+                ? rawMt.id || rawMt.name || ""
+                : rawMt !== undefined && rawMt !== null
+                  ? rawMt
+                  : "";
+
+            const rawKl = d.known_languages;
+            const klStr = Array.isArray(rawKl)
+              ? rawKl
+                  .map((k) =>
+                    typeof k === "object" && k !== null
+                      ? k.name || k.title || ""
+                      : String(k ?? ""),
+                  )
+                  .filter(Boolean)
+                  .join(", ")
+              : typeof rawKl === "object" && rawKl !== null
+                ? rawKl.name || rawKl.title || ""
+                : rawKl !== undefined && rawKl !== null
+                  ? String(rawKl)
+                  : "";
+
             setLanguage((prev) => ({
               ...prev,
-              mothere_tongue:
-                d.mother_tongue ||
-                d.basic_info?.mothere_tongue ||
-                prev.mothere_tongue,
-              known_languages: d.known_languages || prev.known_languages,
+              mothere_tongue: mtVal || prev.mothere_tongue,
+              known_languages: klStr || prev.known_languages,
             }));
           }
 
@@ -982,14 +1216,40 @@ export default function EditProfileScreen({ navigation, route }) {
           }
 
           // Residency
-          if (d.residence_info) {
-            const r = d.residence_info;
+          if (d.residence_info || d.residency_info) {
+            const r = d.residence_info || d.residency_info;
+            const bCid = resolveId(
+              lists.countries,
+              r.birth_country_id || r.birth_country,
+            );
+            const rCid = resolveId(
+              lists.countries,
+              r.recidency_country_id ||
+                r.residency_country_id ||
+                r.recidency_country ||
+                r.residency_country,
+            );
+            const gCid = resolveId(
+              lists.countries,
+              r.growup_country_id ||
+                r.grow_up_country_id ||
+                r.growup_country ||
+                r.grow_up_country,
+            );
             setResidency((prev) => ({
               ...prev,
-              birth_country_id: r.birth_country_id || prev.birth_country_id,
+              birth_country_id:
+                bCid || r.birth_country_id || prev.birth_country_id,
               recidency_country_id:
-                r.recidency_country_id || prev.recidency_country_id,
-              growup_country_id: r.growup_country_id || prev.growup_country_id,
+                rCid ||
+                r.recidency_country_id ||
+                r.residency_country_id ||
+                prev.recidency_country_id,
+              growup_country_id:
+                gCid ||
+                r.growup_country_id ||
+                r.grow_up_country_id ||
+                prev.growup_country_id,
               immigration_status:
                 r.immigration_status || prev.immigration_status,
             }));
@@ -1080,42 +1340,124 @@ export default function EditProfileScreen({ navigation, route }) {
           // Partner Expectation
           if (d.partner_expectation) {
             const pe = d.partner_expectation;
+            const pMaritalId = resolve(
+              "partner marital status",
+              lists.marital,
+              pe.partner_marital_status,
+            );
+            const pCountryId = resolve(
+              "partner country",
+              lists.countries,
+              pe.partner_country_id ?? pe.residence_country_id,
+            );
+            const pStatePool = pCountryId
+              ? lists.states.filter(
+                  (s) => String(s.country_id) === String(pCountryId),
+                )
+              : lists.states;
+            const pStateId = resolve(
+              "partner state",
+              pStatePool.length ? pStatePool : lists.states,
+              pe.partner_state_id,
+            );
+            const pReligionId = resolve(
+              "partner religion",
+              lists.religions,
+              pe.partner_religion_id,
+            );
+            const pCastePool = pReligionId
+              ? lists.castes.filter(
+                  (c) => String(c.religion_id) === String(pReligionId),
+                )
+              : lists.castes;
+            const pCasteId = resolve(
+              "partner caste",
+              pCastePool.length ? pCastePool : lists.castes,
+              pe.partner_caste_id,
+            );
+            const pSubPool = pCasteId
+              ? lists.subCastes.filter(
+                  (sc) => String(sc.caste_id) === String(pCasteId),
+                )
+              : lists.subCastes;
+            const pSubCasteId = resolve(
+              "partner sub-caste",
+              pSubPool.length ? pSubPool : lists.subCastes,
+              pe.partner_sub_caste_id,
+            );
+            const pFamilyValueId = resolve(
+              "partner family value",
+              lists.familyValues,
+              pe.family_value_id,
+            );
+
             setPartnerExpectation((prev) => ({
               ...prev,
-              general: pe.general || prev.general,
-              partner_height: pe.partner_height || prev.partner_height,
-              partner_weight: pe.partner_weight || prev.partner_weight,
-              partner_marital_status:
-                pe.partner_marital_status || prev.partner_marital_status,
+              general:
+                typeof pe.general === "object"
+                  ? pe.general?.name || ""
+                  : pe.general || prev.general,
+              partner_height:
+                pe.partner_height !== null && pe.partner_height !== undefined
+                  ? String(pe.partner_height)
+                  : prev.partner_height,
+              partner_weight:
+                pe.partner_weight !== null && pe.partner_weight !== undefined
+                  ? String(pe.partner_weight)
+                  : prev.partner_weight,
+              partner_marital_status: pMaritalId ?? prev.partner_marital_status,
               partner_children_acceptable:
-                pe.partner_children_acceptable ||
-                prev.partner_children_acceptable,
-              residence_country_id:
-                pe.residence_country_id || prev.residence_country_id,
-              partner_religion_id:
-                pe.partner_religion_id || prev.partner_religion_id,
-              partner_caste_id: pe.partner_caste_id || prev.partner_caste_id,
-              partner_sub_caste_id:
-                pe.partner_sub_caste_id || prev.partner_sub_caste_id,
-              pertner_education: pe.pertner_education || prev.pertner_education,
+                typeof pe.partner_children_acceptable === "object"
+                  ? pe.partner_children_acceptable?.name || ""
+                  : pe.partner_children_acceptable ||
+                    prev.partner_children_acceptable,
+              residence_country_id: pCountryId ?? prev.residence_country_id,
+              partner_religion_id: pReligionId ?? prev.partner_religion_id,
+              partner_caste_id: pCasteId ?? prev.partner_caste_id,
+              partner_sub_caste_id: pSubCasteId ?? prev.partner_sub_caste_id,
+              pertner_education:
+                typeof pe.pertner_education === "object"
+                  ? pe.pertner_education?.name || ""
+                  : pe.pertner_education || prev.pertner_education,
               partner_profession:
-                pe.partner_profession || prev.partner_profession,
+                typeof pe.partner_profession === "object"
+                  ? pe.partner_profession?.name || ""
+                  : pe.partner_profession || prev.partner_profession,
               smoking_acceptable:
-                pe.smoking_acceptable || prev.smoking_acceptable,
+                typeof pe.smoking_acceptable === "object"
+                  ? pe.smoking_acceptable?.name || ""
+                  : pe.smoking_acceptable || prev.smoking_acceptable,
               drinking_acceptable:
-                pe.drinking_acceptable || prev.drinking_acceptable,
-              partner_diet: pe.partner_diet || prev.partner_diet,
-              partner_body_type: pe.partner_body_type || prev.partner_body_type,
+                typeof pe.drinking_acceptable === "object"
+                  ? pe.drinking_acceptable?.name || ""
+                  : pe.drinking_acceptable || prev.drinking_acceptable,
+              partner_diet:
+                typeof pe.partner_diet === "object"
+                  ? pe.partner_diet?.name || ""
+                  : pe.partner_diet || prev.partner_diet,
+              partner_body_type:
+                typeof pe.partner_body_type === "object"
+                  ? pe.partner_body_type?.name || ""
+                  : pe.partner_body_type || prev.partner_body_type,
               partner_personal_value:
-                pe.partner_personal_value || prev.partner_personal_value,
-              partner_manglik: pe.partner_manglik || prev.partner_manglik,
-              language_id: pe.language_id || prev.language_id,
-              family_value_id: pe.family_value_id || prev.family_value_id,
-              partner_country_id:
-                pe.partner_country_id || prev.partner_country_id,
-              partner_state_id: pe.partner_state_id || prev.partner_state_id,
+                typeof pe.partner_personal_value === "object"
+                  ? pe.partner_personal_value?.name || ""
+                  : pe.partner_personal_value || prev.partner_personal_value,
+              partner_manglik:
+                typeof pe.partner_manglik === "object"
+                  ? pe.partner_manglik?.name || ""
+                  : pe.partner_manglik || prev.partner_manglik,
+              language_id:
+                typeof pe.language_id === "object"
+                  ? (pe.language_id?.id ?? pe.language_id?.name)
+                  : (pe.language_id ?? prev.language_id),
+              family_value_id: pFamilyValueId ?? prev.family_value_id,
+              partner_country_id: pCountryId ?? prev.partner_country_id,
+              partner_state_id: pStateId ?? prev.partner_state_id,
               pertner_complexion:
-                pe.pertner_complexion || prev.pertner_complexion,
+                typeof pe.pertner_complexion === "object"
+                  ? pe.pertner_complexion?.name || ""
+                  : pe.pertner_complexion || prev.pertner_complexion,
             }));
           }
 
@@ -1139,7 +1481,10 @@ export default function EditProfileScreen({ navigation, route }) {
   }, [user?.id, token]);
 
   const toggleSection = (sectionKey) => {
-    setExpandedSection((prev) => (prev === sectionKey ? null : sectionKey));
+    setUserExpandedSection((prev) => {
+      const current = prev !== undefined ? prev : routeSection || "basic";
+      return current === sectionKey ? null : sectionKey;
+    });
   };
 
   // Save individual section
@@ -1167,6 +1512,7 @@ export default function EditProfileScreen({ navigation, route }) {
     clearFieldError(sectionKey);
 
     setSavingSection(sectionKey);
+    console.log(sectionKey, "=======");
     try {
       switch (sectionKey) {
         case "introduction": {
@@ -1176,32 +1522,48 @@ export default function EditProfileScreen({ navigation, route }) {
           break;
         }
         case "basic": {
-          // Normalize marital_status & on_behalf to numeric ID
+          const rawMarital =
+            typeof basicInfo.marital_status === "object" &&
+            basicInfo.marital_status !== null
+              ? (basicInfo.marital_status.id ?? basicInfo.marital_status.name)
+              : basicInfo.marital_status;
           const maritalId =
-            Number(basicInfo.marital_status) ||
+            Number(rawMarital) ||
             maritalStatusList.find(
               (m) =>
                 String(m.name).toLowerCase() ===
-                String(basicInfo.marital_status).toLowerCase(),
+                  String(rawMarital).toLowerCase() ||
+                String(m.id) === String(rawMarital),
             )?.id ||
             1;
+
+          const rawOnBehalf =
+            typeof basicInfo.on_behalf === "object" &&
+            basicInfo.on_behalf !== null
+              ? (basicInfo.on_behalf.id ?? basicInfo.on_behalf.name)
+              : basicInfo.on_behalf;
           const onBehalfId =
-            Number(basicInfo.on_behalf) ||
+            Number(rawOnBehalf) ||
             onBehalfList.find(
               (o) =>
                 String(o.name).toLowerCase() ===
-                String(basicInfo.on_behalf).toLowerCase(),
+                  String(rawOnBehalf).toLowerCase() ||
+                String(o.id) === String(rawOnBehalf),
             )?.id ||
             1;
+
+          const safePhone = String(
+            basicInfo.phone || contactInfo.phone || user?.phone || "4567890123",
+          ).trim();
 
           await memberService.updateBasicInfo(
             {
               first_name: basicInfo.first_name,
               firs_name: basicInfo.first_name,
               last_name: basicInfo.last_name,
-              email: basicInfo.email || contactInfo.email,
-              phone: basicInfo.phone || contactInfo.phone,
-              gender: basicInfo.gender,
+              email: basicInfo.email || contactInfo.email || user?.email || "",
+              phone: safePhone,
+              gender: normalizeGender(basicInfo.gender).toLowerCase(),
               on_behalf: onBehalfId,
               date_of_birth: basicInfo.date_of_birth,
               birthday: basicInfo.date_of_birth,
@@ -1212,12 +1574,15 @@ export default function EditProfileScreen({ navigation, route }) {
             token,
           );
 
+          // Clear BOTH profile and settings caches; settings may otherwise
+          // return the old gender when the Profile screen refreshes.
           profileService.clearSettingsCache();
+
           if (updateUser) {
             updateUser({
               name: `${basicInfo.first_name} ${basicInfo.last_name}`.trim(),
-              gender: basicInfo.gender,
-              phone: basicInfo.phone || contactInfo.phone,
+              gender: normalizeGender(basicInfo.gender).toLowerCase(),
+              phone: safePhone,
               email: basicInfo.email || contactInfo.email,
             });
           }
@@ -1232,7 +1597,7 @@ export default function EditProfileScreen({ navigation, route }) {
             },
             token,
           );
-          profileService.clearSettingsCache();
+          profileService.clearProfileCache();
           if (updateUser) {
             updateUser({
               email: contactInfo.email,
@@ -1245,17 +1610,30 @@ export default function EditProfileScreen({ navigation, route }) {
         case "address": {
           const addr =
             addressType === "present" ? presentAddress : permanentAddress;
+          const rawCountry =
+            typeof addr.country_id === "object" && addr.country_id !== null
+              ? addr.country_id.id
+              : addr.country_id;
+          const rawState =
+            typeof addr.state_id === "object" && addr.state_id !== null
+              ? addr.state_id.id
+              : addr.state_id;
+          const rawCity =
+            typeof addr.city_id === "object" && addr.city_id !== null
+              ? addr.city_id.id
+              : addr.city_id;
+
           await memberService.updateAddress(
             {
-              country_id: addr.country_id || 1,
-              state_id: addr.state_id || 1,
-              city_id: addr.city_id || 1,
-              postal_code: addr.postal_code || "110001",
+              country_id: Number(rawCountry) || 101,
+              state_id: Number(rawState) || 12,
+              city_id: Number(rawCity) || 1,
+              postal_code: String(addr.postal_code || "382418").trim(),
               address_type: addressType,
             },
             token,
           );
-          profileService.clearSettingsCache();
+          profileService.clearProfileCache();
           Alert.alert(
             "Success 🎉",
             `${addressType === "present" ? "Present" : "Permanent"} address updated successfully!`,
@@ -1271,17 +1649,17 @@ export default function EditProfileScreen({ navigation, route }) {
             {
               height: cleanH,
               weight: cleanW,
-              eye_color: physical.eye_color || "",
-              hair_color: physical.hair_color || "",
-              complexion: physical.complexion || "",
-              blood_group: physical.blood_group || "",
-              body_type: physical.body_type || "",
-              body_art: physical.body_art || "",
-              disability: physical.disability || "",
+              eye_color: physical.eye_color || "Black",
+              hair_color: physical.hair_color || "Black",
+              complexion: physical.complexion || "Fair",
+              blood_group: physical.blood_group || "O+",
+              body_type: physical.body_type || "Average",
+              body_art: physical.body_art || "None",
+              disability: physical.disability || "No",
             },
             token,
           );
-          profileService.clearSettingsCache();
+          profileService.clearProfileCache();
           Alert.alert(
             "Success 🎉",
             "Physical attributes updated successfully!",
@@ -1289,21 +1667,45 @@ export default function EditProfileScreen({ navigation, route }) {
           break;
         }
         case "language": {
+          const motherTongueId = resolveLanguageId(
+            language.mothere_tongue,
+            languageList,
+          );
+          const knownIds = resolveKnownLanguageIds(
+            language.known_languages,
+            languageList,
+            motherTongueId,
+          );
+
           await memberService.updateLanguage(
             {
-              mothere_tongue: language.mothere_tongue || "",
-              mother_tongue: language.mothere_tongue || "",
-              known_languages: language.known_languages || "",
+              mothere_tongue: motherTongueId,
+              mother_tongue: motherTongueId,
+              known_languages: knownIds,
             },
             token,
           );
-          profileService.clearSettingsCache();
+          profileService.clearProfileCache();
           Alert.alert("Success 🎉", "Language details updated successfully!");
           break;
         }
         case "hobbies": {
-          await memberService.updateHobbies(hobbies, token);
-          profileService.clearSettingsCache();
+          await memberService.updateHobbies(
+            {
+              hobbies: hobbies.hobbies || "",
+              interests: hobbies.interests || "",
+              music: hobbies.music || "",
+              books: hobbies.books || "",
+              movies: hobbies.movies || "",
+              tv_shows: hobbies.tv_shows || "",
+              sports: hobbies.sports || "",
+              fitness_activities: hobbies.fitness_activities || "",
+              cuisines: hobbies.cuisines || "",
+              dress_styles: hobbies.dress_styles || "",
+            },
+            token,
+          );
+          profileService.clearProfileCache();
           Alert.alert(
             "Success 🎉",
             "Hobbies and interests updated successfully!",
@@ -1311,8 +1713,16 @@ export default function EditProfileScreen({ navigation, route }) {
           break;
         }
         case "attitude": {
-          await memberService.updateAttitudeBehavior(attitude, token);
-          profileService.clearSettingsCache();
+          await memberService.updateAttitudeBehavior(
+            {
+              affection: attitude.affection || "",
+              humor: attitude.humor || "",
+              political_views: attitude.political_views || "",
+              religious_service: attitude.religious_service || "",
+            },
+            token,
+          );
+          profileService.clearProfileCache();
           Alert.alert(
             "Success 🎉",
             "Attitude and behavior updated successfully!",
@@ -1320,24 +1730,40 @@ export default function EditProfileScreen({ navigation, route }) {
           break;
         }
         case "residency": {
+          const birthId =
+            resolveId(countryList, residency.birth_country_id) ||
+            Number(residency.birth_country_id) ||
+            101;
+          const recidencyId =
+            resolveId(
+              countryList,
+              residency.recidency_country_id || residency.residency_country_id,
+            ) ||
+            Number(
+              residency.recidency_country_id || residency.residency_country_id,
+            ) ||
+            101;
+          const growupId =
+            resolveId(
+              countryList,
+              residency.growup_country_id || residency.grow_up_country_id,
+            ) ||
+            Number(
+              residency.growup_country_id || residency.grow_up_country_id,
+            ) ||
+            101;
           await memberService.updateResidencyInfo(
             {
-              birth_country_id: residency.birth_country_id || 1,
-              recidency_country_id:
-                residency.recidency_country_id ||
-                residency.residency_country_id ||
-                1,
-              residency_country_id:
-                residency.recidency_country_id ||
-                residency.residency_country_id ||
-                1,
-              growup_country_id: residency.growup_country_id || 1,
-              grow_up_country_id: residency.growup_country_id || 1,
-              immigration_status: residency.immigration_status || "",
+              birth_country_id: birthId,
+              recidency_country_id: recidencyId,
+              residency_country_id: recidencyId,
+              growup_country_id: growupId,
+              grow_up_country_id: growupId,
+              immigration_status: residency.immigration_status || "Citizen",
             },
             token,
           );
-          profileService.clearSettingsCache();
+          profileService.clearProfileCache();
           Alert.alert("Success 🎉", "Residency details updated successfully!");
           break;
         }
@@ -1363,7 +1789,7 @@ export default function EditProfileScreen({ navigation, route }) {
             },
             token,
           );
-          profileService.clearSettingsCache();
+          profileService.clearProfileCache();
           Alert.alert(
             "Success 🎉",
             "Spiritual background updated successfully!",
@@ -1380,7 +1806,7 @@ export default function EditProfileScreen({ navigation, route }) {
             },
             token,
           );
-          profileService.clearSettingsCache();
+          profileService.clearProfileCache();
           Alert.alert("Success 🎉", "Lifestyle updated successfully!");
           break;
         }
@@ -1394,7 +1820,7 @@ export default function EditProfileScreen({ navigation, route }) {
             },
             token,
           );
-          profileService.clearSettingsCache();
+          profileService.clearProfileCache();
           Alert.alert(
             "Success 🎉",
             "Astronomic / horoscope details updated successfully!",
@@ -1411,49 +1837,88 @@ export default function EditProfileScreen({ navigation, route }) {
             },
             token,
           );
-          profileService.clearSettingsCache();
+          profileService.clearProfileCache();
           Alert.alert("Success 🎉", "Family information updated successfully!");
           break;
         }
         case "partner": {
+          const rawPECountry =
+            typeof partnerExpectation.partner_country_id === "object" &&
+            partnerExpectation.partner_country_id !== null
+              ? partnerExpectation.partner_country_id.id
+              : partnerExpectation.partner_country_id;
+          const rawPEResidence =
+            typeof partnerExpectation.residence_country_id === "object" &&
+            partnerExpectation.residence_country_id !== null
+              ? partnerExpectation.residence_country_id.id
+              : partnerExpectation.residence_country_id;
+          const rawPEState =
+            typeof partnerExpectation.partner_state_id === "object" &&
+            partnerExpectation.partner_state_id !== null
+              ? partnerExpectation.partner_state_id.id
+              : partnerExpectation.partner_state_id;
+          const rawPEReligion =
+            typeof partnerExpectation.partner_religion_id === "object" &&
+            partnerExpectation.partner_religion_id !== null
+              ? partnerExpectation.partner_religion_id.id
+              : partnerExpectation.partner_religion_id;
+          const rawPECaste =
+            typeof partnerExpectation.partner_caste_id === "object" &&
+            partnerExpectation.partner_caste_id !== null
+              ? partnerExpectation.partner_caste_id.id
+              : partnerExpectation.partner_caste_id;
+          const rawPESubCaste =
+            typeof partnerExpectation.partner_sub_caste_id === "object" &&
+            partnerExpectation.partner_sub_caste_id !== null
+              ? partnerExpectation.partner_sub_caste_id.id
+              : partnerExpectation.partner_sub_caste_id;
+          const rawPEMarital =
+            typeof partnerExpectation.partner_marital_status === "object" &&
+            partnerExpectation.partner_marital_status !== null
+              ? partnerExpectation.partner_marital_status.id
+              : partnerExpectation.partner_marital_status;
+          const rawPELanguage =
+            typeof partnerExpectation.language_id === "object" &&
+            partnerExpectation.language_id !== null
+              ? partnerExpectation.language_id.id
+              : partnerExpectation.language_id;
+          const rawPEFamilyVal =
+            typeof partnerExpectation.family_value_id === "object" &&
+            partnerExpectation.family_value_id !== null
+              ? partnerExpectation.family_value_id.id
+              : partnerExpectation.family_value_id;
+
           const partnerPayload = {
             ...partnerExpectation,
             general:
               partnerExpectation.general ||
               "Looking for a caring, understanding partner",
             residence_country_id:
-              Number(partnerExpectation.residence_country_id) ||
-              Number(partnerExpectation.partner_country_id) ||
+              Number(rawPEResidence) ||
+              Number(rawPECountry) ||
               Number(presentAddress.country_id) ||
-              1,
+              101,
             partner_country_id:
-              Number(partnerExpectation.partner_country_id) ||
-              Number(partnerExpectation.residence_country_id) ||
+              Number(rawPECountry) ||
+              Number(rawPEResidence) ||
               Number(presentAddress.country_id) ||
-              1,
+              101,
             partner_state_id:
-              Number(partnerExpectation.partner_state_id) ||
-              Number(presentAddress.state_id) ||
-              1,
+              Number(rawPEState) || Number(presentAddress.state_id) || 12,
             partner_religion_id:
-              Number(partnerExpectation.partner_religion_id) ||
+              Number(rawPEReligion) ||
               Number(spiritual.member_religion_id) ||
               1,
             partner_caste_id:
-              Number(partnerExpectation.partner_caste_id) ||
-              Number(spiritual.member_caste_id) ||
-              1,
+              Number(rawPECaste) || Number(spiritual.member_caste_id) || 1,
             partner_sub_caste_id:
-              Number(partnerExpectation.partner_sub_caste_id) ||
+              Number(rawPESubCaste) ||
               Number(spiritual.member_sub_caste_id) ||
               1,
-            partner_marital_status:
-              Number(partnerExpectation.partner_marital_status) || 1,
-            language_id: Number(partnerExpectation.language_id) || 1,
+            partner_marital_status: Number(rawPEMarital) || 1,
+            language_id: Number(rawPELanguage) || 1,
             family_value_id:
-              Number(partnerExpectation.family_value_id) ||
-              Number(spiritual.family_value_id) ||
-              1,
+              Number(rawPEFamilyVal) || Number(spiritual.family_value_id) || 1,
             pertner_education:
               partnerExpectation.pertner_education ||
               partnerExpectation.partner_education ||
@@ -1462,6 +1927,8 @@ export default function EditProfileScreen({ navigation, route }) {
               partnerExpectation.pertner_education ||
               partnerExpectation.partner_education ||
               "Graduate",
+            partner_profession:
+              partnerExpectation.partner_profession || "Professional",
             pertner_complexion:
               partnerExpectation.pertner_complexion ||
               partnerExpectation.partner_complexion ||
@@ -1470,11 +1937,21 @@ export default function EditProfileScreen({ navigation, route }) {
               partnerExpectation.pertner_complexion ||
               partnerExpectation.partner_complexion ||
               "Fair",
+            partner_diet: partnerExpectation.partner_diet || "Vegetarian",
+            partner_children_acceptable:
+              partnerExpectation.partner_children_acceptable || "No",
+            partner_manglik: partnerExpectation.partner_manglik || "No",
+            smoking_acceptable: partnerExpectation.smoking_acceptable || "No",
+            drinking_acceptable: partnerExpectation.drinking_acceptable || "No",
+            partner_body_type:
+              partnerExpectation.partner_body_type || "Average",
+            partner_personal_value:
+              partnerExpectation.partner_personal_value || "Traditional",
             partner_height: partnerExpectation.partner_height || "5.6",
             partner_weight: partnerExpectation.partner_weight || "60",
           };
           await memberService.updatePartnerExpectation(partnerPayload, token);
-          profileService.clearSettingsCache();
+          profileService.clearProfileCache();
           Alert.alert(
             "Success 🎉",
             "Partner expectations updated successfully!",
@@ -1599,7 +2076,7 @@ export default function EditProfileScreen({ navigation, route }) {
           last_name: basicInfo.last_name,
           email: contactInfo.email || basicInfo.email,
           phone: contactInfo.phone || basicInfo.phone,
-          gender: basicInfo.gender,
+          gender: normalizeGender(basicInfo.gender),
           date_of_birth: basicInfo.date_of_birth,
           on_behalf: basicInfo.on_behalf,
           marital_status: basicInfo.marital_status,
@@ -1627,6 +2104,127 @@ export default function EditProfileScreen({ navigation, route }) {
     }
   };
 
+  // Education Handlers
+  const handleToggleEducationStatus = async (item) => {
+    const newStatus = item.present ? 0 : 1;
+    setEducations((prev) =>
+      prev.map((e) => (e.id === item.id ? { ...e, present: !e.present } : e)),
+    );
+    try {
+      await memberService.updateEducationStatus(
+        { id: item.id, status: newStatus },
+        token,
+      );
+      profileService.clearProfileCache();
+    } catch (err) {
+      setEducations((prev) =>
+        prev.map((e) =>
+          e.id === item.id ? { ...e, present: item.present } : e,
+        ),
+      );
+      Alert.alert("Error", err?.message || "Failed to update education status");
+    }
+  };
+
+  const handleDeleteEducation = (item) => {
+    Alert.alert(
+      "Delete Education",
+      `Are you sure you want to delete ${item.degree || "this entry"}?`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              await memberService.deleteEducation(item.id, token);
+              setEducations((prev) => prev.filter((e) => e.id !== item.id));
+              profileService.clearProfileCache();
+            } catch (err) {
+              Alert.alert(
+                "Error",
+                err?.message || "Failed to delete education",
+              );
+            }
+          },
+        },
+      ],
+    );
+  };
+
+  const handleSaveEducation = async (formData) => {
+    if (activeEduModal.item?.id) {
+      await memberService.updateEducation(
+        activeEduModal.item.id,
+        formData,
+        token,
+      );
+    } else {
+      await memberService.createEducation(formData, token);
+    }
+    const fresh = await memberService.getEducations(token);
+    if (Array.isArray(fresh)) setEducations(fresh);
+    profileService.clearProfileCache();
+    Alert.alert("Success 🎉", "Education details saved successfully!");
+  };
+
+  // Career Handlers
+  const handleToggleCareerStatus = async (item) => {
+    const newStatus = item.present ? 0 : 1;
+    setCareers((prev) =>
+      prev.map((c) => (c.id === item.id ? { ...c, present: !c.present } : c)),
+    );
+    try {
+      await memberService.updateCareerStatus(
+        { id: item.id, status: newStatus },
+        token,
+      );
+      profileService.clearProfileCache();
+    } catch (err) {
+      setCareers((prev) =>
+        prev.map((c) =>
+          c.id === item.id ? { ...c, present: item.present } : c,
+        ),
+      );
+      Alert.alert("Error", err?.message || "Failed to update career status");
+    }
+  };
+
+  const handleDeleteCareer = (item) => {
+    Alert.alert(
+      "Delete Career",
+      `Are you sure you want to delete ${item.designation || "this entry"}?`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              await memberService.deleteCareer(item.id, token);
+              setCareers((prev) => prev.filter((c) => c.id !== item.id));
+              profileService.clearProfileCache();
+            } catch (err) {
+              Alert.alert("Error", err?.message || "Failed to delete career");
+            }
+          },
+        },
+      ],
+    );
+  };
+
+  const handleSaveCareer = async (formData) => {
+    if (activeCarModal.item?.id) {
+      await memberService.updateCareer(activeCarModal.item.id, formData, token);
+    } else {
+      await memberService.createCareer(formData, token);
+    }
+    const fresh = await memberService.getCareers(token);
+    if (Array.isArray(fresh)) setCareers(fresh);
+    profileService.clearProfileCache();
+    Alert.alert("Success 🎉", "Career details saved successfully!");
+  };
+
   const handleSaveCurrent = () => {
     handleSaveSection(expandedSection || "basic");
   };
@@ -1637,13 +2235,16 @@ export default function EditProfileScreen({ navigation, route }) {
     "Member Profile";
   const userEmail = contactInfo.email || basicInfo.email || user?.email || "";
   const userPhone = contactInfo.phone || basicInfo.phone || user?.phone || "";
-  const userAvatar =
+  const rawAvatar =
     localAvatar ||
     serverPhoto ||
     user?.avatar_original ||
     user?.avatar ||
-    user?.photo ||
-    DEFAULT_AVATAR;
+    user?.photo;
+  const userAvatar =
+    typeof rawAvatar === "string" && rawAvatar.trim().length > 0
+      ? rawAvatar.trim()
+      : DEFAULT_AVATAR;
   const hasPhoto =
     Boolean(userAvatar) &&
     !String(userAvatar).includes("avatar-place") &&
@@ -1656,12 +2257,21 @@ export default function EditProfileScreen({ navigation, route }) {
     basicMissingFields.length === 0,
     Boolean(contactInfo.phone && contactInfo.email),
     addressMissingCount === 0,
+    educations.length > 0,
+    careers.length > 0,
     Boolean(physical.height && physical.weight),
     Boolean(language.mothere_tongue),
     spiritualMissingCount === 0,
     Boolean(lifestyle.diet),
     Boolean(family.father || family.mother || family.sibling),
-    Boolean(hobbies.hobbies),
+    Boolean(hobbies.hobbies || hobbies.interests),
+    Boolean(
+      attitude.affection ||
+      attitude.humor ||
+      attitude.political_views ||
+      attitude.religious_service,
+    ),
+    Boolean(residency.birth_country_id || residency.recidency_country_id),
     Boolean(partnerExpectation.general),
   ];
   const completionPct = Math.round(
@@ -1725,6 +2335,25 @@ export default function EditProfileScreen({ navigation, route }) {
       ? [astronomic.sun_sign, astronomic.moon_sign].filter(Boolean).join(" • ")
       : "Sun sign, moon sign & birth time";
 
+  const attitudeSubtitle =
+    attitude.humor || attitude.affection || attitude.political_views
+      ? [attitude.affection, attitude.humor, attitude.political_views]
+          .filter(Boolean)
+          .join(" • ")
+      : "Personal attitude & values";
+
+  const residencySubtitle =
+    residency.birth_country_id || residency.recidency_country_id
+      ? [
+          residency.birth_country_id
+            ? getOptionName(countryList, residency.birth_country_id)
+            : "",
+          residency.immigration_status,
+        ]
+          .filter(Boolean)
+          .join(" • ")
+      : "Citizenship & residency";
+
   return (
     <SafeAreaView style={styles.safeArea} edges={["left", "right"]}>
       <ScreenHeader
@@ -1763,9 +2392,12 @@ export default function EditProfileScreen({ navigation, route }) {
         <View style={styles.hero}>
           <View style={styles.heroTop}>
             <View style={styles.avatarWrap}>
-              {userAvatar && !avatarError ? (
+              {userAvatar &&
+              typeof userAvatar === "string" &&
+              userAvatar.trim().length > 0 &&
+              !avatarError ? (
                 <Image
-                  source={{ uri: userAvatar }}
+                  source={{ uri: userAvatar.trim() }}
                   style={styles.avatarImg}
                   resizeMode="cover"
                   onError={() => setAvatarError(true)}
@@ -1981,31 +2613,55 @@ export default function EditProfileScreen({ navigation, route }) {
             </Col>
           </Row>
 
-          <ChipGroup
-            label="Gender *"
-            segmented
-            options={GENDER_OPTIONS}
-            value={basicInfo.gender}
-            onChange={(g) => {
-              clearFieldError("basic", "gender");
-              setBasicInfo((p) => ({ ...p, gender: g }));
-            }}
-          />
+          <View style={styles.fieldWrap}>
+            <FieldLabel label="Gender" required />
 
-          <Field
+            <View style={{ flexDirection: "row", gap: 10 }}>
+              {GENDER_OPTIONS.map((option) => {
+                const isSelected =
+                  normalizeGender(basicInfo.gender) === option.value;
+
+                return (
+                  <TouchableOpacity
+                    key={option.value}
+                    activeOpacity={0.7}
+                    onPress={() => {
+                      clearFieldError("basic", "gender");
+
+                      setBasicInfo((prev) => ({
+                        ...prev,
+                        gender: option.value,
+                      }));
+                    }}
+                    style={[styles.segBtn, isSelected && styles.chipActive]}
+                  >
+                    <Text
+                      style={[
+                        styles.chipText,
+                        isSelected && styles.chipTextActive,
+                      ]}
+                    >
+                      {option.label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
+
+          <SelectField
             label="Date of birth (YYYY-MM-DD)"
             required
             value={basicInfo.date_of_birth}
-            onChangeText={(t) => {
-              clearFieldError("basic", "date_of_birth");
-              setBasicInfo((p) => ({ ...p, date_of_birth: t }));
-            }}
-            placeholder="e.g. 1995-05-15"
+            placeholder="Select date of birth"
+            icon="calendar-outline"
+            iconColor={COLORS.primary}
             missing={
               !basicInfo.date_of_birth ||
               isFieldMissing("basic", "date_of_birth")
             }
             missingText="Date of birth is missing"
+            onPress={() => setDobPickerVisible(true)}
           />
 
           <SelectField
@@ -2277,6 +2933,298 @@ export default function EditProfileScreen({ navigation, route }) {
           />
         </SectionCard>
 
+        {/* ------------------------------ Education Info ------------------------------ */}
+        <SectionCard
+          icon="school-outline"
+          iconColor="#4F46E5"
+          iconBg="#EEF2FF"
+          title="Education Info"
+          subtitle={
+            educations.length > 0
+              ? `${educations.length} degree${educations.length === 1 ? "" : "s"} added`
+              : "Degrees & institutions"
+          }
+          badge={doneOrEmpty(
+            educations.length > 0,
+            `${educations.length} Added`,
+            "Not added",
+          )}
+          expanded={expandedSection === "education"}
+          onToggle={() => toggleSection("education")}
+        >
+          <View style={styles.sectionHeaderActionRow}>
+            <Text style={styles.recordCountLabel}>
+              {educations.length}{" "}
+              {educations.length === 1 ? "Record" : "Records"}
+            </Text>
+            <TouchableOpacity
+              style={styles.addNewRecordBtn}
+              onPress={() => setActiveEduModal({ visible: true, item: null })}
+              activeOpacity={0.8}
+            >
+              <Ionicons
+                name="add"
+                size={16}
+                color="#FFFFFF"
+                style={{ marginRight: 4 }}
+              />
+              <Text style={styles.addNewRecordBtnText}>Add New</Text>
+            </TouchableOpacity>
+          </View>
+
+          {educations.length === 0 ? (
+            <View style={styles.emptyRecordBox}>
+              <Ionicons
+                name="school-outline"
+                size={36}
+                color="#9CA3AF"
+                style={{ marginBottom: 6 }}
+              />
+              <Text style={styles.emptyRecordTitle}>
+                No Education Added Yet
+              </Text>
+              <Text style={styles.emptyRecordSub}>
+                Add your degrees to get more profile views
+              </Text>
+              <TouchableOpacity
+                style={styles.emptyAddBtn}
+                onPress={() => setActiveEduModal({ visible: true, item: null })}
+                activeOpacity={0.8}
+              >
+                <Ionicons
+                  name="add-circle-outline"
+                  size={16}
+                  color={COLORS.primary}
+                  style={{ marginRight: 6 }}
+                />
+                <Text style={styles.emptyAddBtnText}>Add Education</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            educations.map((item) => (
+              <View key={`edu-${item.id}`} style={styles.recordItemCard}>
+                <View style={styles.recordTopRow}>
+                  <View style={styles.recordIconWrap}>
+                    <Ionicons name="school" size={18} color="#4F46E5" />
+                  </View>
+                  <View style={{ flex: 1, marginRight: 8 }}>
+                    <Text style={styles.recordTitleText}>{item.degree}</Text>
+                    <Text style={styles.recordSubtitleText}>
+                      {item.institution}
+                    </Text>
+                    <View style={styles.periodBadge}>
+                      <Ionicons
+                        name="calendar-outline"
+                        size={12}
+                        color="#6B7280"
+                        style={{ marginRight: 4 }}
+                      />
+                      <Text style={styles.periodBadgeText}>
+                        {item.start} - {item.end || "Present"}
+                      </Text>
+                    </View>
+                  </View>
+                </View>
+
+                <View style={styles.recordBottomRow}>
+                  <View style={styles.statusToggleGroup}>
+                    <Text
+                      style={[
+                        styles.statusLabel,
+                        Boolean(item.present)
+                          ? styles.statusLabelActive
+                          : styles.statusLabelInactive,
+                      ]}
+                    >
+                      Status: {Boolean(item.present) ? "Active" : "Inactive"}
+                    </Text>
+                    <Switch
+                      value={Boolean(item.present)}
+                      onValueChange={() => handleToggleEducationStatus(item)}
+                      trackColor={{ false: "#D1D5DB", true: "#A7F3D0" }}
+                      thumbColor={Boolean(item.present) ? "#10B981" : "#F3F4F6"}
+                      ios_backgroundColor="#D1D5DB"
+                    />
+                  </View>
+
+                  <View style={styles.recordActionIcons}>
+                    <TouchableOpacity
+                      style={styles.editActionBtn}
+                      onPress={() => setActiveEduModal({ visible: true, item })}
+                      activeOpacity={0.7}
+                    >
+                      <Ionicons
+                        name="create-outline"
+                        size={17}
+                        color="#0284C7"
+                      />
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.deleteActionBtn}
+                      onPress={() => handleDeleteEducation(item)}
+                      activeOpacity={0.7}
+                    >
+                      <Ionicons
+                        name="trash-outline"
+                        size={17}
+                        color="#DC2626"
+                      />
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </View>
+            ))
+          )}
+        </SectionCard>
+
+        {/* ------------------------------ Career ------------------------------ */}
+        <SectionCard
+          icon="briefcase-outline"
+          iconColor="#059669"
+          iconBg="#ECFDF5"
+          title="Career"
+          subtitle={
+            careers.length > 0
+              ? `${careers.length} role${careers.length === 1 ? "" : "s"} added`
+              : "Designation & company"
+          }
+          badge={doneOrEmpty(
+            careers.length > 0,
+            `${careers.length} Added`,
+            "Not added",
+          )}
+          expanded={expandedSection === "career"}
+          onToggle={() => toggleSection("career")}
+        >
+          <View style={styles.sectionHeaderActionRow}>
+            <Text style={styles.recordCountLabel}>
+              {careers.length} {careers.length === 1 ? "Record" : "Records"}
+            </Text>
+            <TouchableOpacity
+              style={styles.addNewRecordBtn}
+              onPress={() => setActiveCarModal({ visible: true, item: null })}
+              activeOpacity={0.8}
+            >
+              <Ionicons
+                name="add"
+                size={16}
+                color="#FFFFFF"
+                style={{ marginRight: 4 }}
+              />
+              <Text style={styles.addNewRecordBtnText}>Add New</Text>
+            </TouchableOpacity>
+          </View>
+
+          {careers.length === 0 ? (
+            <View style={styles.emptyRecordBox}>
+              <Ionicons
+                name="briefcase-outline"
+                size={36}
+                color="#9CA3AF"
+                style={{ marginBottom: 6 }}
+              />
+              <Text style={styles.emptyRecordTitle}>No Career Added Yet</Text>
+              <Text style={styles.emptyRecordSub}>
+                Add your work experience and company
+              </Text>
+              <TouchableOpacity
+                style={styles.emptyAddBtn}
+                onPress={() => setActiveCarModal({ visible: true, item: null })}
+                activeOpacity={0.8}
+              >
+                <Ionicons
+                  name="add-circle-outline"
+                  size={16}
+                  color={COLORS.primary}
+                  style={{ marginRight: 6 }}
+                />
+                <Text style={styles.emptyAddBtnText}>Add Career</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            careers.map((item) => (
+              <View key={`car-${item.id}`} style={styles.recordItemCard}>
+                <View style={styles.recordTopRow}>
+                  <View
+                    style={[
+                      styles.recordIconWrap,
+                      { backgroundColor: "#ECFDF5" },
+                    ]}
+                  >
+                    <Ionicons name="briefcase" size={18} color="#059669" />
+                  </View>
+                  <View style={{ flex: 1, marginRight: 8 }}>
+                    <Text style={styles.recordTitleText}>
+                      {item.designation}
+                    </Text>
+                    <Text style={styles.recordSubtitleText}>
+                      {item.company}
+                    </Text>
+                    <View style={styles.periodBadge}>
+                      <Ionicons
+                        name="calendar-outline"
+                        size={12}
+                        color="#6B7280"
+                        style={{ marginRight: 4 }}
+                      />
+                      <Text style={styles.periodBadgeText}>
+                        {item.start} - {item.end || "Present"}
+                      </Text>
+                    </View>
+                  </View>
+                </View>
+
+                <View style={styles.recordBottomRow}>
+                  <View style={styles.statusToggleGroup}>
+                    <Text
+                      style={[
+                        styles.statusLabel,
+                        Boolean(item.present)
+                          ? styles.statusLabelActive
+                          : styles.statusLabelInactive,
+                      ]}
+                    >
+                      Status: {Boolean(item.present) ? "Active" : "Inactive"}
+                    </Text>
+                    <Switch
+                      value={Boolean(item.present)}
+                      onValueChange={() => handleToggleCareerStatus(item)}
+                      trackColor={{ false: "#D1D5DB", true: "#A7F3D0" }}
+                      thumbColor={Boolean(item.present) ? "#10B981" : "#F3F4F6"}
+                      ios_backgroundColor="#D1D5DB"
+                    />
+                  </View>
+
+                  <View style={styles.recordActionIcons}>
+                    <TouchableOpacity
+                      style={styles.editActionBtn}
+                      onPress={() => setActiveCarModal({ visible: true, item })}
+                      activeOpacity={0.7}
+                    >
+                      <Ionicons
+                        name="create-outline"
+                        size={17}
+                        color="#0284C7"
+                      />
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.deleteActionBtn}
+                      onPress={() => handleDeleteCareer(item)}
+                      activeOpacity={0.7}
+                    >
+                      <Ionicons
+                        name="trash-outline"
+                        size={17}
+                        color="#DC2626"
+                      />
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </View>
+            ))
+          )}
+        </SectionCard>
+
         {/* ------------------------------ Physical ------------------------------ */}
         <SectionCard
           icon="body-outline"
@@ -2353,6 +3301,30 @@ export default function EditProfileScreen({ navigation, route }) {
             value={physical.body_type}
             onChange={(v) => setPhysical((p) => ({ ...p, body_type: v }))}
           />
+          <ChipGroup
+            label="Eye color"
+            options={EYE_COLORS}
+            value={physical.eye_color}
+            onChange={(v) => setPhysical((p) => ({ ...p, eye_color: v }))}
+          />
+          <ChipGroup
+            label="Hair color"
+            options={HAIR_COLORS}
+            value={physical.hair_color}
+            onChange={(v) => setPhysical((p) => ({ ...p, hair_color: v }))}
+          />
+          <ChipGroup
+            label="Body art (Tattoos / Piercings)"
+            options={BODY_ARTS}
+            value={physical.body_art}
+            onChange={(v) => setPhysical((p) => ({ ...p, body_art: v }))}
+          />
+          <ChipGroup
+            label="Any disability"
+            options={DISABILITIES}
+            value={physical.disability}
+            onChange={(v) => setPhysical((p) => ({ ...p, disability: v }))}
+          />
 
           <SaveButton
             label="Save Physical Attributes"
@@ -2368,7 +3340,11 @@ export default function EditProfileScreen({ navigation, route }) {
           iconBg="#FEF3C7"
           title="Language Details"
           subtitle={
-            language.mothere_tongue || "Mother tongue & known languages"
+            getOptionName(
+              languageList,
+              language.mothere_tongue,
+              language.mothere_tongue,
+            ) || "Mother tongue & known languages"
           }
           badge={doneOrEmpty(
             Boolean(language.mothere_tongue),
@@ -2380,46 +3356,32 @@ export default function EditProfileScreen({ navigation, route }) {
         >
           <ErrorBanner message={sectionErrors.language} />
 
-          {languageList.length > 0 ? (
-            <SelectField
-              label="Mother tongue"
-              required
-              value={language.mothere_tongue}
-              placeholder="Select mother tongue"
-              missing={
-                !language.mothere_tongue ||
-                isFieldMissing("language", "mothere_tongue")
-              }
-              missingText="Mother tongue is missing"
-              onPress={() =>
-                openPicker(
-                  "Select Mother Tongue",
-                  languageList,
-                  language.mothere_tongue,
-                  (item) => {
-                    clearFieldError("language", "mothere_tongue");
-                    setLanguage((p) => ({ ...p, mothere_tongue: item.name }));
-                  },
-                )
-              }
-            />
-          ) : (
-            <Field
-              label="Mother tongue"
-              required
-              value={language.mothere_tongue}
-              onChangeText={(t) => {
-                clearFieldError("language", "mothere_tongue");
-                setLanguage((p) => ({ ...p, mothere_tongue: t }));
-              }}
-              placeholder="e.g. Hindi, Tamil, Bengali"
-              missing={
-                !language.mothere_tongue ||
-                isFieldMissing("language", "mothere_tongue")
-              }
-              missingText="Mother tongue is missing"
-            />
-          )}
+          <SelectField
+            label="Mother tongue"
+            required
+            value={getOptionName(
+              languageList,
+              language.mothere_tongue,
+              language.mothere_tongue || "Gujrati",
+            )}
+            placeholder="Select mother tongue"
+            missing={
+              !language.mothere_tongue ||
+              isFieldMissing("language", "mothere_tongue")
+            }
+            missingText="Mother tongue is missing"
+            onPress={() =>
+              openPicker(
+                "Select Mother Tongue",
+                languageList,
+                language.mothere_tongue,
+                (item) => {
+                  clearFieldError("language", "mothere_tongue");
+                  setLanguage((p) => ({ ...p, mothere_tongue: item.id }));
+                },
+              )
+            }
+          />
 
           <Field
             label="Known languages"
@@ -2429,13 +3391,86 @@ export default function EditProfileScreen({ navigation, route }) {
               clearFieldError("language", "known_languages");
               setLanguage((p) => ({ ...p, known_languages: t }));
             }}
-            placeholder="e.g. English, Hindi, Gujarati"
+            placeholder="e.g. Gujarati, Hindi, English"
             missing={
               !language.known_languages ||
               isFieldMissing("language", "known_languages")
             }
             missingText="Known languages are missing"
           />
+
+          <View style={{ marginTop: 12, marginBottom: 4 }}>
+            <Text
+              style={{
+                fontFamily: FONTS.medium,
+                fontSize: 12,
+                color: COLORS.textLight,
+                marginBottom: 8,
+              }}
+            >
+              Quick select languages:
+            </Text>
+            <View style={styles.chipGrid}>
+              {languageList.map((item) => {
+                const currentArr = (language.known_languages || "")
+                  .split(",")
+                  .map((s) => s.trim().toLowerCase())
+                  .filter(Boolean);
+                const itemNameLower = item.name.toLowerCase();
+                const isSelected = currentArr.some(
+                  (c) =>
+                    c === itemNameLower ||
+                    c.slice(0, 4) === itemNameLower.slice(0, 4),
+                );
+                return (
+                  <TouchableOpacity
+                    key={item.id}
+                    style={[styles.chip, isSelected && styles.chipActive]}
+                    onPress={() => {
+                      clearFieldError("language", "known_languages");
+                      const rawList = (language.known_languages || "")
+                        .split(",")
+                        .map((s) => s.trim())
+                        .filter(Boolean);
+                      let updated;
+                      if (isSelected) {
+                        updated = rawList.filter(
+                          (name) =>
+                            name.toLowerCase() !== itemNameLower &&
+                            name.toLowerCase().slice(0, 4) !==
+                              itemNameLower.slice(0, 4),
+                        );
+                      } else {
+                        updated = [...rawList, item.name];
+                      }
+                      setLanguage((p) => ({
+                        ...p,
+                        known_languages: updated.join(", "),
+                      }));
+                    }}
+                    activeOpacity={0.7}
+                  >
+                    {isSelected ? (
+                      <Ionicons
+                        name="checkmark"
+                        size={14}
+                        color={COLORS.primary}
+                        style={{ marginRight: 4 }}
+                      />
+                    ) : null}
+                    <Text
+                      style={[
+                        styles.chipText,
+                        isSelected && styles.chipTextActive,
+                      ]}
+                    >
+                      {item.name}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
 
           <SaveButton
             label="Save Language Details"
@@ -2685,13 +3720,13 @@ export default function EditProfileScreen({ navigation, route }) {
           </Row>
           <Row>
             <Col>
-              <Field
+              <SelectField
                 label="Time of birth"
                 value={astronomic.time_of_birth}
-                onChangeText={(t) =>
-                  setAstronomic((p) => ({ ...p, time_of_birth: t }))
-                }
-                placeholder="e.g. 10:30 AM"
+                placeholder="Select time (e.g. 10:30 AM)"
+                icon="time-outline"
+                iconColor={COLORS.primary}
+                onPress={() => setTimePickerVisible(true)}
               />
             </Col>
             <Col>
@@ -2762,42 +3797,309 @@ export default function EditProfileScreen({ navigation, route }) {
           iconColor="#16A34A"
           iconBg="#E9F9EE"
           title="Hobbies & Interests"
-          subtitle={hobbies.hobbies || "Personal interests"}
-          badge={doneOrEmpty(Boolean(hobbies.hobbies), "Filled", "Not added")}
+          subtitle={
+            hobbies.hobbies || hobbies.interests || "Personal interests"
+          }
+          badge={doneOrEmpty(
+            Boolean(hobbies.hobbies || hobbies.interests),
+            "Filled",
+            "Not added",
+          )}
           expanded={expandedSection === "hobbies"}
           onToggle={() => toggleSection("hobbies")}
         >
           <ErrorBanner message={sectionErrors.hobbies} />
 
-          <Field
-            label="Hobbies"
-            value={hobbies.hobbies}
-            onChangeText={(t) => setHobbies((p) => ({ ...p, hobbies: t }))}
-            placeholder="e.g. Reading, Photography, Gardening"
+          <Row>
+            <Col>
+              <Field
+                label="Hobbies"
+                value={hobbies.hobbies}
+                onChangeText={(t) => setHobbies((p) => ({ ...p, hobbies: t }))}
+                placeholder="e.g. Reading, Photography"
+              />
+            </Col>
+            <Col>
+              <Field
+                label="Interests"
+                value={hobbies.interests}
+                onChangeText={(t) =>
+                  setHobbies((p) => ({ ...p, interests: t }))
+                }
+                placeholder="e.g. Traveling, Cooking"
+              />
+            </Col>
+          </Row>
+
+          <Row>
+            <Col>
+              <Field
+                label="Favorite Music"
+                value={hobbies.music}
+                onChangeText={(t) => setHobbies((p) => ({ ...p, music: t }))}
+                placeholder="e.g. Classical, Bollywood, Sufi"
+              />
+            </Col>
+            <Col>
+              <Field
+                label="Favorite Books"
+                value={hobbies.books}
+                onChangeText={(t) => setHobbies((p) => ({ ...p, books: t }))}
+                placeholder="e.g. Fiction, History, Novels"
+              />
+            </Col>
+          </Row>
+
+          <Row>
+            <Col>
+              <Field
+                label="Favorite Movies"
+                value={hobbies.movies}
+                onChangeText={(t) => setHobbies((p) => ({ ...p, movies: t }))}
+                placeholder="e.g. Drama, Sci-Fi, Comedy"
+              />
+            </Col>
+            <Col>
+              <Field
+                label="TV Shows"
+                value={hobbies.tv_shows}
+                onChangeText={(t) => setHobbies((p) => ({ ...p, tv_shows: t }))}
+                placeholder="e.g. Documentaries, Sitcoms"
+              />
+            </Col>
+          </Row>
+
+          <Row>
+            <Col>
+              <Field
+                label="Sports"
+                value={hobbies.sports}
+                onChangeText={(t) => setHobbies((p) => ({ ...p, sports: t }))}
+                placeholder="e.g. Cricket, Football, Tennis"
+              />
+            </Col>
+            <Col>
+              <Field
+                label="Fitness Activities"
+                value={hobbies.fitness_activities}
+                onChangeText={(t) =>
+                  setHobbies((p) => ({ ...p, fitness_activities: t }))
+                }
+                placeholder="e.g. Yoga, Gym, Running"
+              />
+            </Col>
+          </Row>
+
+          <Row>
+            <Col>
+              <Field
+                label="Favorite Cuisines"
+                value={hobbies.cuisines}
+                onChangeText={(t) => setHobbies((p) => ({ ...p, cuisines: t }))}
+                placeholder="e.g. Indian, Italian, Chinese"
+              />
+            </Col>
+            <Col>
+              <Field
+                label="Dress Styles"
+                value={hobbies.dress_styles}
+                onChangeText={(t) =>
+                  setHobbies((p) => ({ ...p, dress_styles: t }))
+                }
+                placeholder="e.g. Traditional, Casual, Formal"
+              />
+            </Col>
+          </Row>
+
+          <SaveButton
+            label="Save Hobbies & Interests"
+            saving={savingSection === "hobbies"}
+            onPress={() => handleSaveSection("hobbies")}
           />
+        </SectionCard>
+
+        {/* ------------------------------ Attitude & Behavior ------------------------------ */}
+        <SectionCard
+          icon="heart-circle-outline"
+          iconColor="#EC4899"
+          iconBg="#FDF2F8"
+          title="Attitude & Behavior"
+          subtitle={attitudeSubtitle}
+          badge={doneOrEmpty(
+            Boolean(
+              attitude.affection ||
+              attitude.humor ||
+              attitude.political_views ||
+              attitude.religious_service,
+            ),
+            "Filled",
+            "Not added",
+          )}
+          expanded={expandedSection === "attitude"}
+          onToggle={() => toggleSection("attitude")}
+        >
+          <ErrorBanner message={sectionErrors.attitude} />
+
           <Field
-            label="Interests"
-            value={hobbies.interests}
-            onChangeText={(t) => setHobbies((p) => ({ ...p, interests: t }))}
-            placeholder="e.g. Traveling, Technology, Cooking"
+            label="Affection"
+            value={attitude.affection}
+            onChangeText={(t) => setAttitude((p) => ({ ...p, affection: t }))}
+            placeholder="e.g. High, Moderate, Affectionate"
           />
-          <Field
-            label="Favorite music"
-            value={hobbies.music}
-            onChangeText={(t) => setHobbies((p) => ({ ...p, music: t }))}
-            placeholder="e.g. Classical, Bollywood, Sufi, Pop"
+          <ChipGroup
+            options={AFFECTION_OPTIONS}
+            value={attitude.affection}
+            onChange={(v) => setAttitude((p) => ({ ...p, affection: v }))}
           />
+
           <Field
-            label="Sports & fitness"
-            value={hobbies.sports}
-            onChangeText={(t) => setHobbies((p) => ({ ...p, sports: t }))}
-            placeholder="e.g. Cricket, Badminton, Yoga, Gym"
+            label="Humor"
+            value={attitude.humor}
+            onChangeText={(t) => setAttitude((p) => ({ ...p, humor: t }))}
+            placeholder="e.g. Witty, Friendly, Playful, Sarcastic"
+          />
+          <ChipGroup
+            options={HUMOR_OPTIONS}
+            value={attitude.humor}
+            onChange={(v) => setAttitude((p) => ({ ...p, humor: v }))}
+          />
+
+          <Field
+            label="Political Views"
+            value={attitude.political_views}
+            onChangeText={(t) =>
+              setAttitude((p) => ({ ...p, political_views: t }))
+            }
+            placeholder="e.g. Moderate, Liberal, Conservative, Neutral"
+          />
+          <ChipGroup
+            options={POLITICAL_OPTIONS}
+            value={attitude.political_views}
+            onChange={(v) => setAttitude((p) => ({ ...p, political_views: v }))}
+          />
+
+          <Field
+            label="Religious Service"
+            value={attitude.religious_service}
+            onChangeText={(t) =>
+              setAttitude((p) => ({ ...p, religious_service: t }))
+            }
+            placeholder="e.g. Daily, Weekly, Monthly, Occasionally"
+          />
+          <ChipGroup
+            options={RELIGIOUS_SERVICE_OPTIONS}
+            value={attitude.religious_service}
+            onChange={(v) =>
+              setAttitude((p) => ({ ...p, religious_service: v }))
+            }
           />
 
           <SaveButton
-            label="Save Hobbies"
-            saving={savingSection === "hobbies"}
-            onPress={() => handleSaveSection("hobbies")}
+            label="Save Attitude & Behavior"
+            saving={savingSection === "attitude"}
+            onPress={() => handleSaveSection("attitude")}
+          />
+        </SectionCard>
+
+        {/* ------------------------------ Residency Information ------------------------------ */}
+        <SectionCard
+          icon="globe-outline"
+          iconColor="#0284C7"
+          iconBg="#E0F2FE"
+          title="Residency Information"
+          subtitle={residencySubtitle}
+          badge={doneOrEmpty(
+            Boolean(
+              residency.birth_country_id || residency.recidency_country_id,
+            ),
+            "Filled",
+            "Not added",
+          )}
+          expanded={expandedSection === "residency"}
+          onToggle={() => toggleSection("residency")}
+        >
+          <ErrorBanner message={sectionErrors.residency} />
+
+          <SelectField
+            label="Birth Country"
+            value={
+              residency.birth_country_id
+                ? getOptionName(countryList, residency.birth_country_id, "")
+                : ""
+            }
+            placeholder="Select birth country"
+            onPress={() =>
+              openPicker(
+                "Select Birth Country",
+                countryList,
+                residency.birth_country_id,
+                (item) =>
+                  setResidency((p) => ({ ...p, birth_country_id: item.id })),
+              )
+            }
+          />
+
+          <SelectField
+            label="Residency Country"
+            value={
+              residency.recidency_country_id
+                ? getOptionName(countryList, residency.recidency_country_id, "")
+                : ""
+            }
+            placeholder="Select residency country"
+            onPress={() =>
+              openPicker(
+                "Select Residency Country",
+                countryList,
+                residency.recidency_country_id,
+                (item) =>
+                  setResidency((p) => ({
+                    ...p,
+                    recidency_country_id: item.id,
+                  })),
+              )
+            }
+          />
+
+          <SelectField
+            label="Grow-up Country"
+            value={
+              residency.growup_country_id
+                ? getOptionName(countryList, residency.growup_country_id, "")
+                : ""
+            }
+            placeholder="Select grow-up country"
+            onPress={() =>
+              openPicker(
+                "Select Grow-up Country",
+                countryList,
+                residency.growup_country_id,
+                (item) =>
+                  setResidency((p) => ({ ...p, growup_country_id: item.id })),
+              )
+            }
+          />
+
+          <Field
+            label="Immigration Status"
+            value={residency.immigration_status}
+            onChangeText={(t) =>
+              setResidency((p) => ({ ...p, immigration_status: t }))
+            }
+            placeholder="e.g. Citizen, Permanent Resident, Work Permit"
+          />
+          <ChipGroup
+            options={IMMIGRATION_STATUS_OPTIONS}
+            value={residency.immigration_status}
+            onChange={(v) =>
+              setResidency((p) => ({ ...p, immigration_status: v }))
+            }
+          />
+
+          <SaveButton
+            label="Save Residency Information"
+            saving={savingSection === "residency"}
+            onPress={() => handleSaveSection("residency")}
           />
         </SectionCard>
 
@@ -3304,6 +4606,49 @@ export default function EditProfileScreen({ navigation, route }) {
         onSelect={pickerModal.onSelect}
         onClose={() => setPickerModal((prev) => ({ ...prev, visible: false }))}
       />
+
+      {/* 12-Hour AM/PM Time Picker Modal */}
+      <TimePickerModal
+        visible={timePickerVisible}
+        value={astronomic.time_of_birth}
+        title="Select Time of Birth"
+        onConfirm={(timeStr) => {
+          clearFieldError("astronomic", "time_of_birth");
+          setAstronomic((p) => ({ ...p, time_of_birth: timeStr }));
+        }}
+        onClose={() => setTimePickerVisible(false)}
+      />
+
+      {/* Date of Birth Picker Modal */}
+      <DatePickerModal
+        visible={dobPickerVisible}
+        value={basicInfo.date_of_birth}
+        title="Select Date of Birth"
+        format="YYYY-MM-DD"
+        onConfirm={(dateStr) => {
+          clearFieldError("basic", "date_of_birth");
+          setBasicInfo((p) => ({ ...p, date_of_birth: dateStr }));
+        }}
+        onClose={() => setDobPickerVisible(false)}
+      />
+
+      {/* Education Info Modal (Add / Edit) */}
+      <EducationCareerModal
+        visible={activeEduModal.visible}
+        type="education"
+        item={activeEduModal.item}
+        onSave={handleSaveEducation}
+        onClose={() => setActiveEduModal({ visible: false, item: null })}
+      />
+
+      {/* Career Info Modal (Add / Edit) */}
+      <EducationCareerModal
+        visible={activeCarModal.visible}
+        type="career"
+        item={activeCarModal.item}
+        onSave={handleSaveCareer}
+        onClose={() => setActiveCarModal({ visible: false, item: null })}
+      />
     </SafeAreaView>
   );
 }
@@ -3654,6 +4999,11 @@ const styles = StyleSheet.create({
     flexWrap: "wrap",
     gap: 7,
   },
+  chipGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
   chip: {
     flexDirection: "row",
     alignItems: "center",
@@ -3826,5 +5176,157 @@ const styles = StyleSheet.create({
     height: StyleSheet.hairlineWidth,
     backgroundColor: COLORS.border,
     marginLeft: 54,
+  },
+
+  // Education & Career Records Styles
+  sectionHeaderActionRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 12,
+  },
+  recordCountLabel: {
+    fontFamily: FONTS.medium,
+    fontSize: 13,
+    color: COLORS.textLight,
+  },
+  addNewRecordBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: COLORS.primary,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+  },
+  addNewRecordBtnText: {
+    fontFamily: FONTS.semiBold,
+    fontSize: 12,
+    color: "#FFFFFF",
+  },
+  emptyRecordBox: {
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 24,
+    paddingHorizontal: 16,
+    backgroundColor: "#FDF8F6",
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "#F3E8E2",
+    marginBottom: 8,
+  },
+  emptyRecordTitle: {
+    fontFamily: FONTS.semiBold,
+    fontSize: 15,
+    color: COLORS.text,
+    marginBottom: 2,
+  },
+  emptyRecordSub: {
+    fontFamily: FONTS.regular,
+    fontSize: 12,
+    color: COLORS.textLight,
+    marginBottom: 14,
+    textAlign: "center",
+  },
+  emptyAddBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#FFFFFF",
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: COLORS.primary,
+  },
+  emptyAddBtnText: {
+    fontFamily: FONTS.semiBold,
+    fontSize: 13,
+    color: COLORS.primary,
+  },
+  recordItemCard: {
+    backgroundColor: "#F9FAFB",
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+  },
+  recordTopRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 10,
+  },
+  recordIconWrap: {
+    width: 38,
+    height: 38,
+    borderRadius: 10,
+    backgroundColor: "#EEF2FF",
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 12,
+  },
+  recordTitleText: {
+    fontFamily: FONTS.semiBold,
+    fontSize: 15,
+    color: COLORS.text,
+  },
+  recordSubtitleText: {
+    fontFamily: FONTS.medium,
+    fontSize: 13,
+    color: "#4B5563",
+    marginTop: 1,
+  },
+  periodBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 4,
+  },
+  periodBadgeText: {
+    fontFamily: FONTS.regular,
+    fontSize: 12,
+    color: "#6B7280",
+  },
+  recordBottomRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: "#E5E7EB",
+  },
+  statusToggleGroup: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  statusLabel: {
+    fontFamily: FONTS.medium,
+    fontSize: 12,
+    marginRight: 8,
+  },
+  statusLabelActive: {
+    color: "#059669",
+  },
+  statusLabelInactive: {
+    color: "#6B7280",
+  },
+  recordActionIcons: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  editActionBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    backgroundColor: "#E0F2FE",
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 8,
+  },
+  deleteActionBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    backgroundColor: "#FEE2E2",
+    alignItems: "center",
+    justifyContent: "center",
   },
 });

@@ -15,6 +15,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "../contexts/AuthContext";
 import KeyboardAwareScrollView from "../components/KeyboardAwareScrollView";
+import DatePickerModal from "../components/DatePickerModal";
 import { COLORS, FONTS } from "../theme";
 
 const ON_BEHALF_LIST = [
@@ -152,6 +153,7 @@ export default function SignupScreen({ navigation }) {
   });
   const [errors, setErrors] = useState({});
   const [picker, setPicker] = useState(null); // "onBehalf"
+  const [dobPickerVisible, setDobPickerVisible] = useState(false);
   const [loading, setLoading] = useState(false);
   const [focused, setFocused] = useState(null);
   const [showPassword, setShowPassword] = useState(false);
@@ -175,7 +177,10 @@ export default function SignupScreen({ navigation }) {
     if (!form.gender) e.gender = "Please select gender";
     if (!form.dob.trim()) {
       e.dob = "Date of birth is required";
-    } else if (!/^\d{2}\/\d{2}\/\d{4}$/.test(form.dob)) {
+    } else if (
+      !/^\d{2}\/\d{2}\/\d{4}$/.test(form.dob) &&
+      !/^\d{4}-\d{2}-\d{2}$/.test(form.dob)
+    ) {
       e.dob = "Use format DD/MM/YYYY";
     }
 
@@ -421,28 +426,40 @@ export default function SignupScreen({ navigation }) {
             <FieldError message={errors.gender} />
           </View>
 
-          <Field
-            label="Date of birth"
-            icon="calendar-outline"
-            placeholder="DD/MM/YYYY"
-            inputRef={dobRef}
-            value={form.dob}
-            onChangeText={(t) => {
-              const digits = t.replace(/[^0-9]/g, "").slice(0, 8);
-              let formatted = digits;
-              if (digits.length > 4) {
-                formatted = `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`;
-              } else if (digits.length > 2) {
-                formatted = `${digits.slice(0, 2)}/${digits.slice(2)}`;
-              }
-              update("dob", formatted);
-            }}
-            keyboardType="number-pad"
-            maxLength={10}
-            error={errors.dob}
-            editable={!loading}
-            {...focusProps("dob")}
-          />
+          <View style={styles.field}>
+            <Text style={styles.label}>Date of birth</Text>
+            <TouchableOpacity
+              style={[
+                styles.inputWrap,
+                errors.dob && styles.inputWrapError,
+              ]}
+              onPress={() => setDobPickerVisible(true)}
+              activeOpacity={0.75}
+            >
+              <Ionicons
+                name="calendar-outline"
+                size={18}
+                color={form.dob ? COLORS.primary : COLORS.textLight}
+                style={styles.inputIcon}
+              />
+              <Text
+                style={[
+                  styles.input,
+                  { paddingTop: 14 },
+                  !form.dob && { color: COLORS.textLight },
+                ]}
+              >
+                {form.dob || "Select date of birth (DD/MM/YYYY)"}
+              </Text>
+              <Ionicons
+                name="chevron-down"
+                size={16}
+                color={COLORS.textLight}
+                style={{ marginRight: 12 }}
+              />
+            </TouchableOpacity>
+            <FieldError message={errors.dob} />
+          </View>
         </FormSection>
 
         {/* Contact */}
@@ -699,6 +716,18 @@ export default function SignupScreen({ navigation }) {
           </View>
         </TouchableOpacity>
       </Modal>
+
+      {/* Date of Birth Picker Modal */}
+      <DatePickerModal
+        visible={dobPickerVisible}
+        value={form.dob}
+        title="Select Date of Birth"
+        format="DD/MM/YYYY"
+        onConfirm={(dateStr) => {
+          update("dob", dateStr);
+        }}
+        onClose={() => setDobPickerVisible(false)}
+      />
     </KeyboardAwareScrollView>
   );
 }

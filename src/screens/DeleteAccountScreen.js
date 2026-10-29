@@ -32,7 +32,11 @@ export default function DeleteAccountScreen({ navigation }) {
     const fullName = user?.name || "Member";
     const userEmail = user?.email || "";
     const userPhone = user?.phone || "";
-    const userAvatar = user?.avatar_original || user?.avatar || null;
+    const rawAvatar = user?.avatar_original || user?.avatar;
+    const userAvatar =
+      typeof rawAvatar === "string" && rawAvatar.trim().length > 0
+        ? rawAvatar.trim()
+        : DEFAULT_AVATAR;
 
     const handleDelete = async () => {
         if (!confirmed) {

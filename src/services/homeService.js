@@ -2,6 +2,7 @@ import apiClient, { ApiError } from './apiClient';
 import { ENDPOINTS } from '../config/api';
 
 let cachedDashboard = null;
+let cachedDashboardToken = null;
 let cachedDashboardTime = 0;
 let inFlightDashboardPromise = null;
 const DASHBOARD_CACHE_TTL = 30000; // 30 seconds
@@ -15,6 +16,7 @@ const homeService = {
      */
     clearDashboardCache() {
         cachedDashboard = null;
+        cachedDashboardToken = null;
         cachedDashboardTime = 0;
         inFlightDashboardPromise = null;
     },
@@ -29,13 +31,24 @@ const homeService = {
         if (!token) return null;
 
         const now = Date.now();
-        if (!forceRefresh && cachedDashboard && now - cachedDashboardTime < DASHBOARD_CACHE_TTL) {
+        if (
+            !forceRefresh &&
+            cachedDashboard &&
+            cachedDashboardToken === token &&
+            now - cachedDashboardTime < DASHBOARD_CACHE_TTL
+        ) {
             return cachedDashboard;
         }
 
-        if (!forceRefresh && inFlightDashboardPromise) {
+        if (!forceRefresh && inFlightDashboardPromise && cachedDashboardToken === token) {
             return inFlightDashboardPromise;
         }
+
+        if (forceRefresh || cachedDashboardToken !== token) {
+            this.clearDashboardCache();
+        }
+
+        cachedDashboardToken = token;
 
         inFlightDashboardPromise = (async () => {
             try {
@@ -51,6 +64,7 @@ const homeService = {
 
                 if (response && response.result !== false && response.data) {
                     cachedDashboard = response;
+                    cachedDashboardToken = token;
                     cachedDashboardTime = Date.now();
                 }
 

@@ -223,7 +223,14 @@ export default function HomeScreen({ navigation }) {
             accessibilityLabel="Open profile"
           >
             <Image
-              source={{ uri: memberPhoto || DEFAULT_AVATAR }}
+              source={{
+                uri:
+                  memberPhoto &&
+                  typeof memberPhoto === "string" &&
+                  memberPhoto.trim().length > 0
+                    ? memberPhoto.trim()
+                    : DEFAULT_AVATAR,
+              }}
               style={styles.avatarImg}
               resizeMode="cover"
             />

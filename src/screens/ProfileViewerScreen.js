@@ -167,7 +167,14 @@ function ViewerRowItem({ item, onPress }) {
       activeOpacity={0.75}
     >
       <Image
-        source={{ uri: item.photo }}
+        source={{
+          uri:
+            item?.photo &&
+            typeof item.photo === "string" &&
+            item.photo.trim().length > 0
+              ? item.photo.trim()
+              : DEFAULT_AVATAR,
+        }}
         style={styles.avatar}
         resizeMode="cover"
       />

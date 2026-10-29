@@ -270,10 +270,10 @@ export default function HappyStoryScreen({ navigation }) {
         </View>
 
         {/* Story Photo */}
-        {photoUrl ? (
+        {photoUrl && typeof photoUrl === "string" && photoUrl.trim().length > 0 ? (
           <View style={styles.storyPhotoWrap}>
             <Image
-              source={{ uri: photoUrl }}
+              source={{ uri: photoUrl.trim() }}
               style={styles.storyPhoto}
               resizeMode="cover"
             />

@@ -14,6 +14,7 @@ import { COLORS, FONTS } from "../theme";
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
 
+const nativeAlert = RNAlert.alert;
 let alertSubscriber = null;
 
 /**
@@ -28,8 +29,12 @@ export function showCustomAlert(title, message, buttons, options) {
       options: options || {},
     });
   } else {
-    // Fallback to native alert if provider is not yet mounted
-    RNAlert.alert(title, message, buttons, options);
+    // Fallback to true native alert if custom alert provider is not yet mounted
+    // (Never call RNAlert.alert here to prevent infinite recursion and stack overflow)
+    const fallbackFn = RNAlert.originalAlert || nativeAlert;
+    if (typeof fallbackFn === "function") {
+      fallbackFn.call(RNAlert, title, message, buttons, options);
+    }
   }
 }
 
@@ -38,7 +43,7 @@ export function showCustomAlert(title, message, buttons, options) {
  */
 export function initCustomAlert() {
   if (!RNAlert.__customAlertInstalled) {
-    RNAlert.originalAlert = RNAlert.alert;
+    RNAlert.originalAlert = nativeAlert;
     RNAlert.alert = (title, message, buttons, options) => {
       showCustomAlert(title, message, buttons, options);
     };
@@ -226,10 +231,22 @@ export default function CustomAlert() {
           </View>
 
           {/* Title */}
-          {title ? <Text style={styles.title}>{title}</Text> : null}
+          {title ? (
+            <Text style={styles.title}>
+              {typeof title === "object"
+                ? (title.name || title.title || title.message || "")
+                : String(title)}
+            </Text>
+          ) : null}
 
           {/* Message */}
-          {message ? <Text style={styles.message}>{message}</Text> : null}
+          {message ? (
+            <Text style={styles.message}>
+              {typeof message === "object"
+                ? (message.message || message.name || message.title || JSON.stringify(message))
+                : String(message)}
+            </Text>
+          ) : null}
 
           {/* Buttons */}
           <View

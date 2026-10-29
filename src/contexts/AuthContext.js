@@ -1,16 +1,59 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { authService } from '../services/authService';
 import storageService from '../services/storageService';
+import profileService from '../services/profileService';
+import homeService from '../services/homeService';
+import { DEMO_TOKEN as CONFIG_DEMO_TOKEN } from '../config/api';
+
+export const DEMO_TOKEN =
+    CONFIG_DEMO_TOKEN ||
+    'eyJpdiI6Ikp5RXlzL1FNZm1pYjE3L0VSdWdiRlE9PSIsInZhbHVlIjoiS0FvUzNPNFMxUnVoblVVWkZhRHovQT09IiwibWFjIjoiMjYyZGVkOWI1NGUwZDM0MDgyNTAzNTk2OWRlNDgyOTQ2NDU2ZTMwZTNmOGYxYzg4MTRhMDA2NThiODMyZjE1NiIsInRhZyI6IiJ9';
+
+export const DEMO_USER = {
+    id: 9999,
+    first_name: 'Demo',
+    last_name: 'User',
+    name: 'Demo User',
+    email: 'demo@hindumatrimony.org.in',
+    phone: '9876543210',
+    gender: 'Male',
+    date_of_birth: '1998-01-01',
+    age: 28,
+    on_behalf: 'Self',
+    marital_status: 'Never Married',
+    mother_tongue: 'Hindi',
+    religion: 'Hindu',
+    religion_name: 'Hindu',
+    caste: 'Brahmin',
+    caste_name: 'Brahmin',
+    city: 'Ahmedabad',
+    state: 'Gujarat',
+    country: 'India',
+    location: 'Ahmedabad, Gujarat, India',
+    height: "5' 9\"",
+    weight: '70 kg',
+    membership: 2,
+    membership_type: 'Premium',
+    package_name: 'Premium Member',
+    package_id: 1,
+    is_premium: true,
+    is_demo: true,
+    code: 'HM-DEMO',
+    member_code: 'HM-DEMO',
+};
 
 export const AuthContext = createContext({
     user: null,
     token: null,
     isAuthenticated: false,
+    isDemo: false,
     isLoading: true,
     login: async () => {},
     register: async () => {},
     logout: async () => {},
     updateUser: () => {},
+    loginAsDemo: async () => {},
+    loginWithToken: async () => {},
 });
 
 export function AuthProvider({ children }) {
@@ -55,6 +98,10 @@ export function AuthProvider({ children }) {
 
     // Login action
     const login = useCallback(async (credentials) => {
+        // Clear caches so the new login starts fresh without stale account data
+        profileService.clearSettingsCache();
+        homeService.clearDashboardCache();
+
         const response = await authService.login(credentials);
 
         if (response && response.access_token) {
@@ -62,14 +109,21 @@ export function AuthProvider({ children }) {
             await storageService.saveAuthToken(response.access_token);
 
             if (response.user) {
-                // Merge with any existing stored profile attributes to prevent data loss
                 const existing = await storageService.getUser();
-                const mergedUser = {
-                    ...(existing || {}),
-                    ...response.user,
-                    phone: response.user.phone || existing?.phone || '',
-                    email: response.user.email || existing?.email || '',
-                };
+                // ONLY merge if existing user matches the new user ID to prevent cross-account pollution
+                const isSameUser = existing && String(existing.id) === String(response.user.id);
+                const mergedUser = isSameUser
+                    ? {
+                          ...existing,
+                          ...response.user,
+                          phone: response.user.phone || existing?.phone || '',
+                          email: response.user.email || existing?.email || '',
+                      }
+                    : {
+                          ...response.user,
+                          phone: response.user.phone || '',
+                          email: response.user.email || '',
+                      };
                 setUser(mergedUser);
                 await storageService.saveUser(mergedUser);
             }
@@ -80,6 +134,10 @@ export function AuthProvider({ children }) {
 
     // Register / Signup action
     const register = useCallback(async (userData) => {
+        // Clear caches so the new registration starts fresh
+        profileService.clearSettingsCache();
+        homeService.clearDashboardCache();
+
         const response = await authService.register(userData);
 
         if (response && response.access_token) {
@@ -116,6 +174,9 @@ export function AuthProvider({ children }) {
         } catch (err) {
             console.warn('Logout error:', err);
         } finally {
+            // Clean up all memory caches and storage immediately
+            profileService.clearSettingsCache();
+            homeService.clearDashboardCache();
             setToken(null);
             setUser(null);
             await storageService.clearAuthData();
@@ -131,15 +192,52 @@ export function AuthProvider({ children }) {
         });
     }, []);
 
+    // Demo login action with predefined token and account
+    const loginAsDemo = useCallback(async (customToken = DEMO_TOKEN, customUser = {}) => {
+        profileService.clearSettingsCache();
+        homeService.clearDashboardCache();
+
+        const tokenToUse = customToken || DEMO_TOKEN;
+        const demoUserData = {
+            ...DEMO_USER,
+            ...customUser,
+        };
+
+        setToken(tokenToUse);
+        setUser(demoUserData);
+
+        await Promise.all([
+            storageService.saveAuthToken(tokenToUse),
+            storageService.saveUser(demoUserData),
+        ]);
+
+        return {
+            result: true,
+            access_token: tokenToUse,
+            user: demoUserData,
+        };
+    }, []);
+
+    // Login with token alias
+    const loginWithToken = useCallback(
+        async (customToken, customUser = {}) => {
+            return loginAsDemo(customToken, customUser);
+        },
+        [loginAsDemo]
+    );
+
     const value = {
         user,
         token,
         isAuthenticated: !!token,
+        isDemo: !!(user?.is_demo || token === DEMO_TOKEN),
         isLoading,
         login,
         register,
         logout,
         updateUser,
+        loginAsDemo,
+        loginWithToken,
     };
 
     return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

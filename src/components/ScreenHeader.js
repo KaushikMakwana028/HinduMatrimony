@@ -74,6 +74,25 @@ export default function ScreenHeader({
     );
   }
 
+  const safeTitle =
+    typeof title === "object" && title !== null
+      ? (title.name || title.title || "")
+      : title !== null && title !== undefined
+        ? String(title)
+        : "";
+  const safeSubtitle =
+    typeof subtitle === "object" && subtitle !== null
+      ? (subtitle.name || subtitle.title || "")
+      : subtitle !== null && subtitle !== undefined
+        ? String(subtitle)
+        : "";
+  const safeBadge =
+    typeof badge === "object" && badge !== null
+      ? (badge.name || badge.title || badge.label || "")
+      : badge !== null && badge !== undefined
+        ? String(badge)
+        : "";
+
   return (
     <View style={containerStyle}>
       {statusBarElement}
@@ -91,13 +110,13 @@ export default function ScreenHeader({
 
         <View style={styles.titleArea}>
           <View style={styles.titleRow}>
-            {title ? (
+            {safeTitle ? (
               <Text style={styles.title} numberOfLines={1}>
-                {title}
+                {safeTitle}
               </Text>
             ) : null}
 
-            {badge ? (
+            {safeBadge ? (
               <View
                 style={[styles.badgePill, { backgroundColor: badgeBgColor }]}
               >
@@ -113,15 +132,15 @@ export default function ScreenHeader({
                   style={[styles.badgeText, { color: badgeColor }]}
                   numberOfLines={1}
                 >
-                  {badge}
+                  {safeBadge}
                 </Text>
               </View>
             ) : null}
           </View>
 
-          {subtitle ? (
+          {safeSubtitle ? (
             <Text style={styles.subtitle} numberOfLines={1}>
-              {subtitle}
+              {safeSubtitle}
             </Text>
           ) : null}
         </View>

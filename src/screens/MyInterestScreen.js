@@ -892,7 +892,14 @@ export default function MyInterestScreen() {
           {/* Portrait Photo Container */}
           <View style={styles.photoContainer}>
             <Image
-              source={{ uri: item.photo || DEFAULT_AVATAR }}
+              source={{
+                uri:
+                  item?.photo &&
+                  typeof item.photo === "string" &&
+                  item.photo.trim().length > 0
+                    ? item.photo.trim()
+                    : DEFAULT_AVATAR,
+              }}
               style={styles.cardPhoto}
               resizeMode="cover"
             />

@@ -17,7 +17,7 @@ import KeyboardAwareScrollView from "../components/KeyboardAwareScrollView";
 import { COLORS, FONTS } from "../theme";
 
 export default function LoginScreen({ navigation }) {
-  const { login } = useAuth();
+  const { login, loginAsDemo } = useAuth();
   const insets = useSafeAreaInsets();
   const safeTop = Math.max(
     insets.top,
@@ -31,10 +31,22 @@ export default function LoginScreen({ navigation }) {
   const [showPassword, setShowPassword] = useState(false);
   const [focusedField, setFocusedField] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [demoLoading, setDemoLoading] = useState(false);
   const [errors, setErrors] = useState({});
 
-  const handleGuestLogin = () => {
-    navigation.replace("MainTabs");
+  const handleGuestLogin = async () => {
+    setDemoLoading(true);
+    try {
+      if (loginAsDemo) {
+        await loginAsDemo();
+      }
+      navigation.replace("MainTabs");
+    } catch (error) {
+      console.log("Demo login error:", error?.message);
+      navigation.replace("MainTabs");
+    } finally {
+      setDemoLoading(false);
+    }
   };
 
   const validate = () => {
@@ -265,10 +277,14 @@ export default function LoginScreen({ navigation }) {
         <TouchableOpacity
           style={styles.guestBtn}
           onPress={handleGuestLogin}
-          disabled={loading}
+          disabled={loading || demoLoading}
           activeOpacity={0.7}
         >
-          <Text style={styles.guestBtnText}>Browse without signing in</Text>
+          {demoLoading ? (
+            <ActivityIndicator size="small" color={COLORS.primary} />
+          ) : (
+            <Text style={styles.guestBtnText}>Browse without signing in</Text>
+          )}
         </TouchableOpacity>
       </View>
 

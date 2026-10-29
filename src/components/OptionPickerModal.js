@@ -124,7 +124,11 @@ export default function OptionPickerModal({
             maxToRenderPerBatch={30}
             windowSize={10}
             renderItem={({ item }) => {
-              const isSelected = String(item.id) === String(selectedId);
+              const isSelected = String(item.id ?? item) === String(selectedId);
+              const displayName =
+                typeof item === "object" && item !== null
+                  ? (item.name || item.title || item.label || item.value || "")
+                  : String(item ?? "");
               return (
                 <TouchableOpacity
                   style={[styles.itemRow, isSelected && styles.itemRowSelected]}
@@ -132,7 +136,7 @@ export default function OptionPickerModal({
                   activeOpacity={0.7}
                 >
                   <Text style={[styles.itemText, isSelected && styles.itemTextSelected]}>
-                    {item.name}
+                    {displayName}
                   </Text>
                   {isSelected && (
                     <Ionicons name="checkmark-circle" size={20} color={COLORS.primary} />

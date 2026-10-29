@@ -1,4 +1,10 @@
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import React, {
+  useState,
+  useEffect,
+  useCallback,
+  useMemo,
+  useRef,
+} from "react";
 import {
   View,
   Text,
@@ -44,15 +50,57 @@ const PREMIUM_COLOR = "#6D28D9";
 const PREMIUM_SOFT = "#F3E8FF";
 const GOLD = "#F5C451";
 
+// Safely extracts a display string from primitive values or relation objects (e.g. { id, name })
+function extractString(val, fallback = "") {
+  if (val === null || val === undefined) return fallback;
+  if (typeof val === "string") {
+    const trimmed = val.trim();
+    return trimmed.length > 0 ? trimmed : fallback;
+  }
+  if (typeof val === "number" || typeof val === "boolean") return String(val);
+  if (typeof val === "object") {
+    if (typeof val.name === "string" && val.name.trim()) return val.name.trim();
+    if (typeof val.title === "string" && val.title.trim())
+      return val.title.trim();
+    if (typeof val.label === "string" && val.label.trim())
+      return val.label.trim();
+    if (typeof val.value === "string" && val.value.trim())
+      return val.value.trim();
+    if (typeof val.text === "string" && val.text.trim()) return val.text.trim();
+    if (typeof val.name === "object") return extractString(val.name, fallback);
+  }
+  return fallback;
+}
+
+function normalizeGenderDisplay(value) {
+  const raw =
+    value && typeof value === "object"
+      ? value.name ||
+        value.label ||
+        value.value ||
+        value.gender ||
+        value.id ||
+        ""
+      : value;
+  const gender = String(raw ?? "")
+    .trim()
+    .toLowerCase();
+
+  if (["male", "m", "man", "1"].includes(gender)) return "Male";
+  if (["female", "f", "woman", "2"].includes(gender)) return "Female";
+  return "";
+}
+
 function calculateAge(dob) {
-  if (!dob) return "";
+  const cleanDob = extractString(dob);
+  if (!cleanDob) return "";
   let birthDate;
-  if (String(dob).includes("/")) {
-    const parts = String(dob).split("/");
+  if (cleanDob.includes("/")) {
+    const parts = cleanDob.split("/");
     if (parts.length === 3)
       birthDate = new Date(`${parts[2]}-${parts[1]}-${parts[0]}`);
   } else {
-    birthDate = new Date(dob);
+    birthDate = new Date(cleanDob);
   }
   if (!birthDate || isNaN(birthDate.getTime())) return "";
   const diff = Date.now() - birthDate.getTime();
@@ -63,7 +111,8 @@ function calculateAge(dob) {
 
 function toList(value) {
   if (!value) return [];
-  return String(value)
+  if (Array.isArray(value)) return value.map(extractString).filter(Boolean);
+  return String(extractString(value))
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean);
@@ -73,15 +122,25 @@ function toList(value) {
 /* Small building blocks                                               */
 /* ------------------------------------------------------------------ */
 
-// List of label/value rows. Empty values are skipped, last row has no divider.
+// List of label/value rows. Safely handles objects {id, name} to avoid React child errors.
 function InfoList({ rows }) {
-  const visible = rows.filter((r) => r && r.value);
+  if (!Array.isArray(rows)) return null;
+  const visible = rows
+    .map((r) => {
+      if (!r) return null;
+      const strLabel = extractString(r.label);
+      const strVal = extractString(r.value);
+      if (!strLabel || !strVal) return null;
+      return { label: strLabel, value: strVal };
+    })
+    .filter(Boolean);
+
   if (visible.length === 0) return null;
   return (
     <View>
       {visible.map((row, i) => (
         <View
-          key={row.label}
+          key={row.label + "_" + i}
           style={[
             styles.infoRow,
             i === visible.length - 1 && styles.infoRowLast,
@@ -98,13 +157,15 @@ function InfoList({ rows }) {
 }
 
 function ChipGroup({ label, items }) {
-  if (!items || items.length === 0) return null;
+  if (!items || !Array.isArray(items) || items.length === 0) return null;
+  const validItems = items.map(extractString).filter(Boolean);
+  if (validItems.length === 0) return null;
   return (
     <View style={styles.chipBlock}>
-      <Text style={styles.chipBlockLabel}>{label}</Text>
+      <Text style={styles.chipBlockLabel}>{extractString(label)}</Text>
       <View style={styles.chipWrap}>
-        {items.map((item) => (
-          <View key={item} style={styles.chip}>
+        {validItems.map((item, idx) => (
+          <View key={item + "_" + idx} style={styles.chip}>
             <Text style={styles.chipText}>{item}</Text>
           </View>
         ))}
@@ -154,6 +215,9 @@ function ProfileCardSection({ title, icon, sectionKey, navigation, children }) {
 }
 
 function QuickAction({ icon, tint, bg, title, sub, badge, onPress }) {
+  const displayTitle = extractString(title);
+  const displaySub = extractString(sub);
+  const displayBadge = extractString(badge);
   return (
     <TouchableOpacity
       style={styles.quickItem}
@@ -162,17 +226,17 @@ function QuickAction({ icon, tint, bg, title, sub, badge, onPress }) {
     >
       <View style={[styles.quickIcon, { backgroundColor: bg }]}>
         <Ionicons name={icon} size={22} color={tint} />
-        {badge ? (
+        {displayBadge ? (
           <View style={styles.quickBadge}>
-            <Text style={styles.quickBadgeText}>{badge}</Text>
+            <Text style={styles.quickBadgeText}>{displayBadge}</Text>
           </View>
         ) : null}
       </View>
       <Text style={styles.quickTitle} numberOfLines={1}>
-        {title}
+        {displayTitle}
       </Text>
       <Text style={styles.quickSub} numberOfLines={1}>
-        {sub}
+        {displaySub}
       </Text>
     </TouchableOpacity>
   );
@@ -182,7 +246,7 @@ function MenuGroup({ title, danger, children }) {
   return (
     <View style={styles.menuGroup}>
       <Text style={[styles.menuGroupTitle, danger && { color: COLORS.danger }]}>
-        {title}
+        {extractString(title)}
       </Text>
       <View style={styles.menuGroupCard}>{children}</View>
     </View>
@@ -200,7 +264,7 @@ function MenuRow({ icon, tint, bg, label, onPress, last, danger }) {
         <Ionicons name={icon} size={17} color={tint} />
       </View>
       <Text style={[styles.menuRowLabel, danger && { color: COLORS.danger }]}>
-        {label}
+        {extractString(label)}
       </Text>
       <Ionicons
         name="chevron-forward"
@@ -225,10 +289,14 @@ export default function ProfileScreen({ navigation }) {
   });
   const [emailUnverified, setEmailUnverified] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [loggingOut, setLoggingOut] = useState(false);
   const [localAvatar, setLocalAvatar] = useState(null);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [activeTab, setActiveTab] = useState("profile"); // "profile" | "settings"
+
+  const currentUserId = user?.id ? String(user.id) : null;
+  const lastUserIdRef = useRef(currentUserId);
 
   const fetchGallery = useCallback(async () => {
     if (!token) return;
@@ -258,7 +326,10 @@ export default function ProfileScreen({ navigation }) {
   const fetchFullProfile = useCallback(
     async (forceRefresh = false) => {
       const userId = user?.id;
-      if (!userId || !token) return;
+      if (!userId || !token) {
+        setLoading(false);
+        return;
+      }
       try {
         const response = await profileService.getMyProfile(
           userId,
@@ -273,18 +344,44 @@ export default function ProfileScreen({ navigation }) {
         if (/not verified/i.test(err?.message)) {
           setEmailUnverified(true);
         }
+      } finally {
+        setLoading(false);
       }
     },
     [user?.id, token],
   );
 
+  // Reset and refetch immediately whenever user ID changes (account switch / re-login)
+  useEffect(() => {
+    if (currentUserId && lastUserIdRef.current !== currentUserId) {
+      lastUserIdRef.current = currentUserId;
+      setProfileData(null);
+      setLocalAvatar(null);
+      setGalleryImages([]);
+      fetchFullProfile(true);
+      fetchGallery();
+      fetchHappyStory();
+    }
+  }, [currentUserId, fetchFullProfile, fetchGallery, fetchHappyStory]);
+
   // Refresh data whenever screen comes into focus (serves instant 0ms memory cache)
   useFocusEffect(
     useCallback(() => {
-      fetchFullProfile(false);
-      fetchGallery();
-      fetchHappyStory();
-    }, [fetchFullProfile, fetchGallery, fetchHappyStory]),
+      const isNewUser =
+        currentUserId && lastUserIdRef.current !== currentUserId;
+      if (isNewUser) {
+        lastUserIdRef.current = currentUserId;
+        setProfileData(null);
+        setLocalAvatar(null);
+        setGalleryImages([]);
+      }
+
+      Promise.allSettled([
+        fetchFullProfile(Boolean(isNewUser)),
+        fetchGallery(),
+        fetchHappyStory(),
+      ]);
+    }, [currentUserId, fetchFullProfile, fetchGallery, fetchHappyStory]),
   );
 
   // Subscribe to cross-screen updates
@@ -358,119 +455,149 @@ export default function ProfileScreen({ navigation }) {
   const astronomic = profileData?.astrologies || profileData?.astronomic;
   const family = profileData?.families_information || profileData?.family_info;
   const hobbies = profileData?.hobbies_interest || profileData?.hobbies;
+  const attitude = profileData?.attitude_behavior || profileData?.attitude;
+  const residency =
+    profileData?.residence_info ||
+    profileData?.residency_info ||
+    profileData?.residency;
   const partnerExpectation = profileData?.partner_expectation;
-  const knownLanguages = profileData?.known_languages || "";
+  const knownLanguages = extractString(
+    Array.isArray(profileData?.known_languages)
+      ? profileData.known_languages
+          .map(extractString)
+          .filter(Boolean)
+          .join(", ")
+      : profileData?.known_languages || user?.known_languages,
+  );
 
-  const userSplit = (user?.name || "").trim().split(" ");
-  const firstName =
+  const rawUserName = extractString(user?.name);
+  const userSplit = rawUserName.trim().split(" ");
+  const rawFirstName =
     basicInfo?.first_name ||
     basicInfo?.firs_name ||
     profileData?.first_name ||
-    user?.first_name ||
-    userSplit[0] ||
-    "";
+    user?.first_name;
+  const firstName = extractString(rawFirstName) || userSplit[0] || "";
+
+  const rawLastName =
+    basicInfo?.last_name || profileData?.last_name || user?.last_name;
   const lastName =
-    basicInfo?.last_name ||
-    profileData?.last_name ||
-    user?.last_name ||
-    userSplit.slice(1).join(" ") ||
-    "";
+    extractString(rawLastName) || userSplit.slice(1).join(" ") || "";
+
   const fullName =
     firstName || lastName
       ? `${firstName} ${lastName}`.trim()
-      : user?.name || "Member profile";
+      : rawUserName || "Member profile";
 
-  const memberCode =
+  const memberCode = extractString(
     basicInfo?.code ||
-    profileData?.code ||
-    user?.code ||
-    user?.member_code ||
-    (user?.id ? `HM-${user.id}` : "");
-
-  const memberDob =
-    basicInfo?.date_of_birth ||
-    basicInfo?.birthday ||
-    basicInfo?.birth_date ||
-    profileData?.date_of_birth ||
-    user?.date_of_birth ||
-    user?.dob ||
-    user?.birthday ||
-    "";
-
-  const memberAge = basicInfo?.age
-    ? String(basicInfo.age)
-    : user?.age
-      ? String(user.age)
-      : calculateAge(memberDob);
-
-  const memberGenderRaw =
-    basicInfo?.gender || profileData?.gender || user?.gender || "";
-  const memberGender = memberGenderRaw
-    ? memberGenderRaw.charAt(0).toUpperCase() +
-      memberGenderRaw.slice(1).toLowerCase()
-    : "";
-
-  const maritalStatus =
-    basicInfo?.maritial_status ||
-    basicInfo?.marital_status ||
-    profileData?.maritial_status ||
-    profileData?.marital_status ||
-    user?.marital_status ||
-    user?.maritial_status ||
-    "";
-
-  const onBehalfKey = String(
-    basicInfo?.on_behalf || profileData?.on_behalf || user?.on_behalf || "",
+      profileData?.code ||
+      user?.code ||
+      user?.member_code ||
+      (user?.id ? `HM-${user.id}` : ""),
   );
-  const onBehalfName =
+
+  const memberDob = extractString(
+    basicInfo?.date_of_birth ||
+      basicInfo?.birthday ||
+      basicInfo?.birth_date ||
+      profileData?.date_of_birth ||
+      user?.date_of_birth ||
+      user?.dob ||
+      user?.birthday,
+  );
+
+  const rawAge = basicInfo?.age ?? user?.age;
+  const memberAge = extractString(
+    rawAge !== undefined && rawAge !== null && String(rawAge).trim() !== ""
+      ? String(rawAge)
+      : calculateAge(memberDob),
+  );
+
+  const memberGender = normalizeGenderDisplay(
+    user?.gender || basicInfo?.gender || profileData?.gender,
+  );
+
+  const maritalStatus = extractString(
+    basicInfo?.marital_status?.name ||
+      basicInfo?.maritial_status?.name ||
+      profileData?.marital_status?.name ||
+      profileData?.maritial_status?.name ||
+      user?.marital_status?.name ||
+      basicInfo?.marital_status ||
+      basicInfo?.maritial_status ||
+      profileData?.marital_status ||
+      profileData?.maritial_status ||
+      user?.marital_status ||
+      user?.maritial_status,
+  );
+
+  const rawBehalf =
     basicInfo?.onbehalf?.name ||
     basicInfo?.on_behalf?.name ||
     profileData?.onbehalf?.name ||
-    ON_BEHALF_MAP[onBehalfKey] ||
-    (user?.on_behalf && isNaN(user.on_behalf) ? user.on_behalf : "Self");
+    basicInfo?.on_behalf ||
+    profileData?.on_behalf ||
+    user?.on_behalf;
+  const onBehalfKey = extractString(
+    typeof rawBehalf === "object"
+      ? (rawBehalf?.id ?? rawBehalf?.name)
+      : rawBehalf,
+  );
+  const onBehalfName = extractString(
+    typeof rawBehalf === "object" && rawBehalf?.name
+      ? rawBehalf.name
+      : ON_BEHALF_MAP[onBehalfKey] ||
+          (onBehalfKey && isNaN(Number(onBehalfKey)) ? onBehalfKey : "Self"),
+    "Self",
+  );
 
-  const motherTongue =
-    basicInfo?.mothere_tongue ||
-    basicInfo?.mother_tongue ||
-    profileData?.mother_tongue ||
-    user?.mothere_tongue ||
-    user?.mother_tongue ||
-    "";
+  const motherTongue = extractString(
+    basicInfo?.mother_tongue?.name ||
+      basicInfo?.mothere_tongue?.name ||
+      profileData?.mother_tongue?.name ||
+      basicInfo?.mother_tongue ||
+      basicInfo?.mothere_tongue ||
+      profileData?.mother_tongue ||
+      user?.mother_tongue ||
+      user?.mothere_tongue,
+  );
 
   const defaultAvatarForGender =
     memberGender.toLowerCase() === "female"
       ? DEFAULT_FEMALE_AVATAR
       : DEFAULT_AVATAR;
 
-  const userPhoto =
+  const userPhoto = extractString(
     localAvatar ||
-    basicInfo?.photo ||
-    profileData?.photo ||
-    user?.avatar_original ||
-    user?.avatar ||
-    defaultAvatarForGender;
+      basicInfo?.photo ||
+      profileData?.photo ||
+      user?.avatar_original ||
+      user?.avatar,
+    defaultAvatarForGender,
+  );
 
-  const userPhone =
+  const userPhone = extractString(
     contactDetails?.phone ||
-    basicInfo?.phone ||
-    profileData?.phone ||
-    user?.phone ||
-    "";
+      basicInfo?.phone ||
+      profileData?.phone ||
+      user?.phone,
+  );
 
-  const userEmail =
+  const userEmail = extractString(
     contactDetails?.email ||
-    basicInfo?.email ||
-    profileData?.email ||
-    user?.email ||
-    "";
+      basicInfo?.email ||
+      profileData?.email ||
+      user?.email,
+  );
 
   const isPremium = useMemo(() => {
     // 1. Explicit package name checks
     const names = [
-      user?.package_name,
-      profileData?.package_name,
-      profileData?.current_package_info?.package_name,
-      user?.current_package,
+      extractString(user?.package_name),
+      extractString(profileData?.package_name),
+      extractString(profileData?.current_package_info?.package_name),
+      extractString(user?.current_package),
     ];
     for (const n of names) {
       if (!n) continue;
@@ -493,7 +620,7 @@ export default function ProfileScreen({ navigation }) {
       profileData?.package_id ||
         user?.package_id ||
         profileData?.current_package_info?.package_id ||
-        user?.current_package_id
+        user?.current_package_id,
     );
     if (pkgId === 1) return false;
     if (pkgId > 1) return true;
@@ -512,76 +639,92 @@ export default function ProfileScreen({ navigation }) {
 
   const isAccountDeactivated = Boolean(
     user?.deactivated === 1 ||
-      user?.deactivated === "1" ||
-      user?.deactivation_status === 1 ||
-      user?.deactivation_status === "1" ||
-      profileData?.deactivated === 1 ||
-      profileData?.deactivated === "1" ||
-      profileData?.deactivation_status === 1 ||
-      profileData?.deactivation_status === "1"
+    user?.deactivated === "1" ||
+    user?.deactivation_status === 1 ||
+    user?.deactivation_status === "1" ||
+    profileData?.deactivated === 1 ||
+    profileData?.deactivated === "1" ||
+    profileData?.deactivation_status === 1 ||
+    profileData?.deactivation_status === "1",
   );
 
-  const introductionBio =
-    profileData?.introduction || profileData?.intoduction?.introduction || "";
-  const religionName =
+  const introductionBio = extractString(
+    profileData?.introduction || profileData?.intoduction?.introduction,
+  );
+
+  const religionName = extractString(
     spiritual?.religion?.name ||
-    (typeof spiritual?.religion === "string" ? spiritual.religion : "") ||
-    spiritual?.religion_name ||
-    basicInfo?.religion_name ||
-    user?.religion_name ||
-    user?.religion ||
-    (spiritual?.member_religion_id || spiritual?.religion_id ? "Hindu" : "") ||
-    "";
-  const casteName =
+      spiritual?.religion ||
+      spiritual?.religion_name ||
+      basicInfo?.religion_name ||
+      basicInfo?.religion ||
+      user?.religion_name ||
+      user?.religion ||
+      (spiritual?.member_religion_id || spiritual?.religion_id ? "Hindu" : ""),
+  );
+
+  const casteName = extractString(
     spiritual?.caste?.name ||
-    (typeof spiritual?.caste === "string" ? spiritual.caste : "") ||
-    spiritual?.caste_name ||
-    basicInfo?.caste_name ||
-    user?.caste_name ||
-    user?.caste ||
-    "";
-  const subCasteName =
+      spiritual?.caste ||
+      spiritual?.caste_name ||
+      basicInfo?.caste_name ||
+      basicInfo?.caste ||
+      user?.caste_name ||
+      user?.caste,
+  );
+
+  const subCasteName = extractString(
     spiritual?.sub_caste?.name ||
-    (typeof spiritual?.sub_caste === "string" ? spiritual.sub_caste : "") ||
-    spiritual?.sub_caste_name ||
-    "";
+      spiritual?.sub_caste ||
+      spiritual?.sub_caste_name ||
+      basicInfo?.sub_caste_name ||
+      user?.sub_caste,
+  );
 
-  const city =
-    presentAddress?.city?.name || presentAddress?.city || user?.city || "";
-  const state =
-    presentAddress?.state?.name || presentAddress?.state || user?.state || "";
-  const country =
-    presentAddress?.country?.name ||
-    presentAddress?.country ||
-    user?.country ||
-    "";
-  const locationStr =
-    [city, state, country].filter(Boolean).join(", ") || user?.location || "";
+  const city = extractString(
+    presentAddress?.city?.name || presentAddress?.city || user?.city,
+  );
+  const state = extractString(
+    presentAddress?.state?.name || presentAddress?.state || user?.state,
+  );
+  const country = extractString(
+    presentAddress?.country?.name || presentAddress?.country || user?.country,
+  );
+  const locationStr = extractString(
+    [city, state, country].filter(Boolean).join(", ") || user?.location,
+  );
 
-  const permCity = permanentAddress?.city?.name || permanentAddress?.city || "";
-  const permState =
-    permanentAddress?.state?.name || permanentAddress?.state || "";
-  const permCountry =
-    permanentAddress?.country?.name || permanentAddress?.country || "";
+  const permCity = extractString(
+    permanentAddress?.city?.name ||
+      permanentAddress?.city ||
+      user?.permanent_city,
+  );
+  const permState = extractString(
+    permanentAddress?.state?.name ||
+      permanentAddress?.state ||
+      user?.permanent_state,
+  );
+  const permCountry = extractString(
+    permanentAddress?.country?.name ||
+      permanentAddress?.country ||
+      user?.permanent_country,
+  );
   const permLocationStr = [permCity, permState, permCountry]
     .filter(Boolean)
     .join(", ");
 
-  const heightStr = physical?.height || user?.height || "";
-  const weightStr = physical?.weight || user?.weight || "";
-  const educationStr =
+  const heightStr = extractString(physical?.height || user?.height);
+  const weightStr = extractString(physical?.weight || user?.weight);
+  const educationStr = extractString(
     Array.isArray(educationArr) && educationArr[0]?.degree
       ? educationArr[0].degree
-      : (typeof educationArr === "string" ? educationArr : "") ||
-        user?.education ||
-        "";
-  const careerStr =
+      : educationArr || user?.education,
+  );
+  const careerStr = extractString(
     Array.isArray(careerArr) && careerArr[0]?.designation
       ? careerArr[0].designation
-      : (typeof careerArr === "string" ? careerArr : "") ||
-        user?.profession ||
-        user?.career ||
-        "";
+      : careerArr || user?.profession || user?.career,
+  );
 
   const hasCustomPhoto = Boolean(
     userPhoto &&
@@ -609,7 +752,9 @@ export default function ProfileScreen({ navigation }) {
         sub: "Name, date of birth, marital status",
         points: 15,
         done: Boolean(
-          (firstName || user?.name) && (memberDob || memberAge) && maritalStatus,
+          (firstName || user?.name) &&
+          (memberDob || memberAge) &&
+          maritalStatus,
         ),
       },
       {
@@ -619,7 +764,9 @@ export default function ProfileScreen({ navigation }) {
         label: "Location & address",
         sub: "City, state and country details",
         points: 15,
-        done: Boolean(city || state || locationStr || permCity || permLocationStr),
+        done: Boolean(
+          city || state || locationStr || permCity || permLocationStr,
+        ),
       },
       {
         key: "spiritual",
@@ -630,18 +777,18 @@ export default function ProfileScreen({ navigation }) {
         points: 15,
         done: Boolean(
           spiritual?.member_religion_id ||
-            spiritual?.religion_id ||
-            spiritual?.member_caste_id ||
-            spiritual?.caste_id ||
-            spiritual?.member_sub_caste_id ||
-            spiritual?.ethnicity ||
-            spiritual?.personal_value ||
-            religionName ||
-            casteName ||
-            user?.religion ||
-            user?.caste ||
-            basicInfo?.religion ||
-            basicInfo?.caste,
+          spiritual?.religion_id ||
+          spiritual?.member_caste_id ||
+          spiritual?.caste_id ||
+          spiritual?.member_sub_caste_id ||
+          spiritual?.ethnicity ||
+          spiritual?.personal_value ||
+          religionName ||
+          casteName ||
+          user?.religion ||
+          user?.caste ||
+          basicInfo?.religion ||
+          basicInfo?.caste,
         ),
       },
       {
@@ -675,13 +822,13 @@ export default function ProfileScreen({ navigation }) {
         points: 10,
         done: Boolean(
           partnerExpectation?.general ||
-            partnerExpectation?.residence_country_id ||
-            partnerExpectation?.partner_religion_id ||
-            partnerExpectation?.partner_caste_id ||
-            partnerExpectation?.partner_country_id ||
-            partnerExpectation?.pertner_education ||
-            partnerExpectation?.partner_profession ||
-            partnerExpectation?.partner_marital_status,
+          partnerExpectation?.residence_country_id ||
+          partnerExpectation?.partner_religion_id ||
+          partnerExpectation?.partner_caste_id ||
+          partnerExpectation?.partner_country_id ||
+          partnerExpectation?.pertner_education ||
+          partnerExpectation?.partner_profession ||
+          partnerExpectation?.partner_marital_status,
         ),
       },
       {
@@ -693,17 +840,20 @@ export default function ProfileScreen({ navigation }) {
         points: 10,
         done: Boolean(
           family?.father_name ||
-            family?.father ||
-            family?.mother_name ||
-            family?.mother ||
-            family?.family_value_id ||
-            family?.family_value ||
-            family?.family_status,
+          family?.father ||
+          family?.mother_name ||
+          family?.mother ||
+          family?.family_value_id ||
+          family?.family_value ||
+          family?.family_status,
         ),
       },
     ];
 
-    const score = checklist.reduce((sum, c) => sum + (c.done ? c.points : 0), 0);
+    const score = checklist.reduce(
+      (sum, c) => sum + (c.done ? c.points : 0),
+      0,
+    );
     return {
       profileCompleteness: Math.min(100, Math.max(0, Math.round(score))),
       missingItems: checklist.filter((c) => !c.done),
@@ -751,7 +901,7 @@ export default function ProfileScreen({ navigation }) {
           last_name: lastName,
           email: userEmail,
           phone: userPhone,
-          gender: memberGender.toLowerCase() || "male",
+          gender: memberGender ? memberGender.toLowerCase() : "",
           date_of_birth: memberDob,
           on_behalf: onBehalfKey || "1",
           marital_status: maritalStatus || "Never Married",
@@ -856,13 +1006,15 @@ export default function ProfileScreen({ navigation }) {
     religion: "spiritual",
     caste: "spiritual",
     education: "education",
-    career: "education",
+    career: "career",
     physical: "physical",
     intro: "introduction",
     introduction: "introduction",
     partner: "partner",
     family: "family",
     hobbies: "hobbies",
+    attitude: "attitude",
+    residency: "residency",
   };
 
   const handleMissingPress = (item) => {
@@ -879,6 +1031,7 @@ export default function ProfileScreen({ navigation }) {
     memberGender,
     maritalStatus,
   ]
+    .map(extractString)
     .filter(Boolean)
     .join("  |  ");
 
@@ -942,7 +1095,14 @@ export default function ProfileScreen({ navigation }) {
           <View style={styles.heroBody}>
             <View style={styles.avatarRing}>
               <Image
-                source={{ uri: userPhoto }}
+                source={{
+                  uri:
+                    userPhoto &&
+                    typeof userPhoto === "string" &&
+                    userPhoto.trim().length > 0
+                      ? userPhoto.trim()
+                      : defaultAvatarForGender,
+                }}
                 style={styles.avatarImg}
                 resizeMode="cover"
               />
@@ -1107,21 +1267,48 @@ export default function ProfileScreen({ navigation }) {
         <View style={styles.strengthCard}>
           <View style={styles.strengthHeader}>
             <Text style={styles.strengthTitle}>Profile strength</Text>
-            <Text style={[styles.strengthPercent, { color: barColor }]}>
-              {profileCompleteness}%
-            </Text>
+            {loading && !profileData ? (
+              <ActivityIndicator size="small" color={COLORS.primary} />
+            ) : (
+              <Text style={[styles.strengthPercent, { color: barColor }]}>
+                {profileCompleteness}%
+              </Text>
+            )}
           </View>
 
           <View style={styles.progressBarTrack}>
             <View
               style={[
                 styles.progressBarFill,
-                { width: `${profileCompleteness}%`, backgroundColor: barColor },
+                {
+                  width: `${loading && !profileData ? 0 : profileCompleteness}%`,
+                  backgroundColor: barColor,
+                },
               ]}
             />
           </View>
 
-          {missingItems.length > 0 ? (
+          {loading && !profileData ? (
+            <View
+              style={{
+                paddingVertical: 20,
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <ActivityIndicator size="small" color={COLORS.primary} />
+              <Text
+                style={{
+                  marginTop: 8,
+                  fontSize: 13,
+                  color: COLORS.textLight,
+                  fontFamily: FONTS.medium,
+                }}
+              >
+                Loading profile details...
+              </Text>
+            </View>
+          ) : missingItems.length > 0 ? (
             <View style={styles.missingListContainer}>
               <View style={styles.missingListHeader}>
                 <Text
@@ -1138,7 +1325,8 @@ export default function ProfileScreen({ navigation }) {
                   key={item.key}
                   style={[
                     styles.missingItemRow,
-                    idx === missingItems.length - 1 && styles.missingItemRowLast,
+                    idx === missingItems.length - 1 &&
+                      styles.missingItemRowLast,
                   ]}
                   onPress={() => handleMissingPress(item)}
                   activeOpacity={0.7}
@@ -1473,14 +1661,9 @@ export default function ProfileScreen({ navigation }) {
               </ProfileCardSection>
             ) : null}
 
-            {family &&
-            (family.father ||
-              family.mother ||
-              family.sibling ||
-              hobbies?.hobbies ||
-              hobbies?.interests) ? (
+            {family && (family.father || family.mother || family.sibling) ? (
               <ProfileCardSection
-                title="Family & interests"
+                title="Family information"
                 icon="people-outline"
                 sectionKey="family"
                 navigation={navigation}
@@ -1492,8 +1675,108 @@ export default function ProfileScreen({ navigation }) {
                     { label: "Siblings", value: family?.sibling },
                   ]}
                 />
+              </ProfileCardSection>
+            ) : null}
+
+            {hobbies &&
+            (hobbies.hobbies ||
+              hobbies.interests ||
+              hobbies.music ||
+              hobbies.books ||
+              hobbies.movies ||
+              hobbies.tv_shows ||
+              hobbies.sports ||
+              hobbies.fitness_activities ||
+              hobbies.cuisines ||
+              hobbies.dress_styles) ? (
+              <ProfileCardSection
+                title="Hobbies & interests"
+                icon="happy-outline"
+                sectionKey="hobbies"
+                navigation={navigation}
+              >
                 <ChipGroup label="Hobbies" items={hobbyChips} />
                 <ChipGroup label="Interests" items={interestChips} />
+                <InfoList
+                  rows={[
+                    { label: "Favorite music", value: hobbies.music },
+                    { label: "Favorite books", value: hobbies.books },
+                    { label: "Favorite movies", value: hobbies.movies },
+                    { label: "TV shows", value: hobbies.tv_shows },
+                    { label: "Sports", value: hobbies.sports },
+                    {
+                      label: "Fitness activities",
+                      value: hobbies.fitness_activities,
+                    },
+                    { label: "Cuisines", value: hobbies.cuisines },
+                    { label: "Dress styles", value: hobbies.dress_styles },
+                  ]}
+                />
+              </ProfileCardSection>
+            ) : null}
+
+            {attitude &&
+            (attitude.affection ||
+              attitude.humor ||
+              attitude.political_views ||
+              attitude.religious_service) ? (
+              <ProfileCardSection
+                title="Attitude & behavior"
+                icon="heart-circle-outline"
+                sectionKey="attitude"
+                navigation={navigation}
+              >
+                <InfoList
+                  rows={[
+                    { label: "Affection", value: attitude.affection },
+                    { label: "Humor", value: attitude.humor },
+                    {
+                      label: "Political views",
+                      value: attitude.political_views,
+                    },
+                    {
+                      label: "Religious service",
+                      value: attitude.religious_service,
+                    },
+                  ]}
+                />
+              </ProfileCardSection>
+            ) : null}
+
+            {residency &&
+            (residency.birth_country ||
+              residency.recidency_country ||
+              residency.residency_country ||
+              residency.growup_country ||
+              residency.immigration_status) ? (
+              <ProfileCardSection
+                title="Residency information"
+                icon="globe-outline"
+                sectionKey="residency"
+                navigation={navigation}
+              >
+                <InfoList
+                  rows={[
+                    {
+                      label: "Birth country",
+                      value: residency.birth_country,
+                    },
+                    {
+                      label: "Residency country",
+                      value:
+                        residency.recidency_country ||
+                        residency.residency_country,
+                    },
+                    {
+                      label: "Grow-up country",
+                      value: residency.growup_country,
+                    },
+                    {
+                      label: "Immigration status",
+                      value: residency.immigration_status,
+                    },
+                  ]}
+                />
               </ProfileCardSection>
             ) : null}
 
@@ -1505,7 +1788,7 @@ export default function ProfileScreen({ navigation }) {
             >
               {partnerExpectation?.general ? (
                 <Text style={[styles.bioText, { marginBottom: 10 }]}>
-                  {partnerExpectation.general}
+                  {extractString(partnerExpectation.general)}
                 </Text>
               ) : null}
               <InfoList

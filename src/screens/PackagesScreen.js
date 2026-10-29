@@ -933,24 +933,28 @@ export default function PackagesScreen({ navigation }) {
                 {selectedPaymentMethod?.qrImageUrl ? (
                   <View style={styles.qrCard}>
                     <Text style={styles.qrLabel}>SCAN UPI QR CODE TO PAY</Text>
-                    <TouchableOpacity
-                      activeOpacity={0.9}
-                      onPress={() => {
-                        setQrModalImage(selectedPaymentMethod.qrImageUrl);
-                        setQrModalVisible(true);
-                      }}
-                      style={styles.qrImageContainer}
-                    >
-                      <Image
-                        source={{ uri: selectedPaymentMethod.qrImageUrl }}
-                        style={styles.qrImage}
-                        resizeMode="contain"
-                      />
-                      <View style={styles.qrEnlargeHint}>
-                        <Ionicons name="expand" size={12} color="#FFFFFF" style={{ marginRight: 4 }} />
-                        <Text style={styles.qrEnlargeText}>Tap to enlarge</Text>
-                      </View>
-                    </TouchableOpacity>
+                    {selectedPaymentMethod?.qrImageUrl &&
+                    typeof selectedPaymentMethod.qrImageUrl === "string" &&
+                    selectedPaymentMethod.qrImageUrl.trim() ? (
+                      <TouchableOpacity
+                        activeOpacity={0.9}
+                        onPress={() => {
+                          setQrModalImage(selectedPaymentMethod.qrImageUrl);
+                          setQrModalVisible(true);
+                        }}
+                        style={styles.qrImageContainer}
+                      >
+                        <Image
+                          source={{ uri: selectedPaymentMethod.qrImageUrl.trim() }}
+                          style={styles.qrImage}
+                          resizeMode="contain"
+                        />
+                        <View style={styles.qrEnlargeHint}>
+                          <Ionicons name="expand" size={12} color="#FFFFFF" style={{ marginRight: 4 }} />
+                          <Text style={styles.qrEnlargeText}>Tap to enlarge</Text>
+                        </View>
+                      </TouchableOpacity>
+                    ) : null}
 
                     <View style={styles.upiAppsRow}>
                       <Text style={styles.upiAppsText}>
@@ -1056,13 +1060,15 @@ export default function PackagesScreen({ navigation }) {
                           {paymentProof.size ? `${Math.round(paymentProof.size / 1024)} KB` : "PDF Document"}
                         </Text>
                       </View>
-                    ) : (
+                    ) : paymentProof?.uri &&
+                      typeof paymentProof.uri === "string" &&
+                      paymentProof.uri.trim() ? (
                       <Image
-                        source={{ uri: paymentProof.uri }}
+                        source={{ uri: paymentProof.uri.trim() }}
                         style={styles.proofPreviewImg}
                         resizeMode="cover"
                       />
-                    )}
+                    ) : null}
 
                     <View style={styles.proofActionRow}>
                       <TouchableOpacity
@@ -1157,9 +1163,11 @@ export default function PackagesScreen({ navigation }) {
               </TouchableOpacity>
             </View>
 
-            {qrModalImage ? (
+            {qrModalImage &&
+            typeof qrModalImage === "string" &&
+            qrModalImage.trim() ? (
               <Image
-                source={{ uri: qrModalImage }}
+                source={{ uri: qrModalImage.trim() }}
                 style={styles.qrModalImg}
                 resizeMode="contain"
               />
@@ -1272,11 +1280,13 @@ export default function PackagesScreen({ navigation }) {
                   </Text>
                 </View>
 
-                {invoiceData.custom_payment_proof ? (
+                {invoiceData?.custom_payment_proof &&
+                typeof invoiceData.custom_payment_proof === "string" &&
+                invoiceData.custom_payment_proof.trim() ? (
                   <View style={{ marginTop: 16 }}>
                     <Text style={styles.invoiceRowLabel}>Attached Payment Proof:</Text>
                     <Image
-                      source={{ uri: invoiceData.custom_payment_proof }}
+                      source={{ uri: invoiceData.custom_payment_proof.trim() }}
                       style={styles.invoiceProofImg}
                       resizeMode="contain"
                     />

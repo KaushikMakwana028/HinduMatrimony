@@ -320,6 +320,45 @@ function resolveName(value, map) {
   return str;
 }
 
+function normalizeSearch(v) {
+  return String(v ?? "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function memberMatchesSearch(m, query, lookupMaps) {
+  const q = normalizeSearch(query);
+  if (!q) return true;
+
+  const fields = [
+    m.name,
+    m.memberId,
+    m.id,
+    resolveName(m.rawReligion, lookupMaps.religions),
+    resolveName(m.rawCaste, lookupMaps.castes),
+    resolveName(m.rawCountry, lookupMaps.countries),
+    resolveName(m.rawMaritalStatus, lookupMaps.maritalStatuses),
+    resolveName(m.rawMotherTongue, lookupMaps.languages),
+    m.city,
+    m.state,
+    m.location,
+    m.career,
+    m.age,
+  ];
+  const hay = fields.map(normalizeSearch).join(" | ");
+  const idAlnum = [m.memberId, m.id]
+    .map((x) => normalizeSearch(x).replace(/[^a-z0-9]/g, ""))
+    .join(" ");
+
+  // every word must match somewhere (so "app kumar" works)
+  return q.split(" ").every((token) => {
+    if (hay.includes(token)) return true;
+    const t = token.replace(/[^a-z0-9]/g, ""); // "HM-123" -> "hm123"
+    return t.length > 0 && idAlnum.includes(t);
+  });
+}
+
 /**
  * Smart Pagination Range Generator
  * Fits screen width without skipping pages:
@@ -622,6 +661,10 @@ export default function ActiveMembersScreen() {
 
   // Search Query (Client Live Filtering + Optional Server Member Code Search)
   const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedQuery, setDebouncedQuery] = useState("");
+  const [searchPool, setSearchPool] = useState([]);
+  const [searchPoolKey, setSearchPoolKey] = useState("");
+  const [searchPoolLoading, setSearchPoolLoading] = useState(false);
 
   // Modal Filters (aligned with POST /member/member-listing?page=... payload)
   const [filterMemberCode, setFilterMemberCode] = useState("");
@@ -1050,6 +1093,7 @@ export default function ActiveMembersScreen() {
   const onRefresh = useCallback(async () => {
     if (!token) return;
     setRefreshing(true);
+    setSearchPoolKey(""); // reload the searchable list on refresh
     try {
       await Promise.allSettled([
         activeMemberService.getProfileSettings(token).then((res) => {
@@ -1140,64 +1184,102 @@ export default function ActiveMembersScreen() {
     SHORTLIST_STORAGE_KEY,
   ]);
 
+  // Debounce the search text
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedQuery(searchQuery.trim()), 300);
+    return () => clearTimeout(t);
+  }, [searchQuery]);
+
+  // When searching, load ALL pages once (cached) so every profile is searchable
+  const searchActive = Boolean(debouncedQuery);
+  useEffect(() => {
+    if (!searchActive || !token) {
+      setSearchPoolLoading(false);
+      return;
+    }
+    const key = JSON.stringify(appliedFilters);
+    if (searchPoolKey === key) {
+      setSearchPoolLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    (async () => {
+      setSearchPoolLoading(true);
+      try {
+        const first = await activeMemberService.getMemberList(
+          appliedFilters,
+          1,
+          token,
+        );
+        const p1 = extractPaginationData(first);
+        let raw = [...p1.rawMembers];
+        const lastPage = Math.min(p1.totalPages, 50); // safety cap
+
+        for (let start = 2; start <= lastPage; start += 5) {
+          const batch = [];
+          for (let p = start; p < start + 5 && p <= lastPage; p++) {
+            batch.push(
+              activeMemberService
+                .getMemberList(appliedFilters, p, token)
+                .catch(() => null),
+            );
+          }
+          const results = await Promise.all(batch);
+          if (cancelled) return;
+          results.forEach((r) => {
+            if (r) raw = raw.concat(extractPaginationData(r).rawMembers);
+          });
+        }
+        if (cancelled) return;
+
+        memberStateService.registerMembers(raw);
+        const seen = new Set();
+        const formatted = [];
+        raw.forEach((item, i) => {
+          const f = formatLiveMember(item, i);
+          if (f && !seen.has(String(f.id))) {
+            seen.add(String(f.id));
+            formatted.push(f);
+          }
+        });
+        setSearchPool(formatted);
+        setSearchPoolKey(key);
+      } catch (err) {
+        console.log("Search pool load error:", err?.message);
+      } finally {
+        if (!cancelled) setSearchPoolLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [searchActive, appliedFilters, token, searchPoolKey]);
+
   // Client-side instant search filtering on active page
   const filteredMembers = useMemo(() => {
-    return members.filter((m) => {
+    const hasQuery = Boolean(searchQuery.trim());
+    const usePool =
+      hasQuery &&
+      searchPool.length > 0 &&
+      searchPoolKey === JSON.stringify(appliedFilters);
+    const source = usePool ? searchPool : members;
+
+    return source.filter((m) => {
       if (ignoredMap[m.id]) return false;
-
-      const resolvedReligion = resolveName(m.rawReligion, lookupMaps.religions);
-      const resolvedCaste = resolveName(m.rawCaste, lookupMaps.castes);
-      const resolvedCountry = resolveName(m.rawCountry, lookupMaps.countries);
-      const resolvedMarital = resolveName(
-        m.rawMaritalStatus,
-        lookupMaps.maritalStatuses,
-      );
-      const resolvedMotherTongue = resolveName(
-        m.rawMotherTongue,
-        lookupMaps.languages,
-      );
-
-      if (searchQuery.trim()) {
-        const q = searchQuery.toLowerCase().trim();
-        const cleanCode = q.replace(/^hm-?/i, "");
-        const nameStr = String(m.name || "").toLowerCase();
-        const idStr = String(m.memberId || "").toLowerCase();
-        const rawIdStr = String(m.id || "").toLowerCase();
-        const religionStr = String(resolvedReligion || "").toLowerCase();
-        const casteStr = String(resolvedCaste || "").toLowerCase();
-        const countryStr = String(resolvedCountry || "").toLowerCase();
-        const cityStr = String(m.city || m.rawCity || "").toLowerCase();
-        const stateStr = String(m.state || m.rawState || "").toLowerCase();
-        const locationStr = String(m.location || "").toLowerCase();
-        const careerStr = String(m.career || "").toLowerCase();
-        const maritalStr = String(resolvedMarital || "").toLowerCase();
-        const motherTongueStr = String(
-          resolvedMotherTongue || "",
-        ).toLowerCase();
-        const ageStr = String(m.age || "");
-
-        const matches =
-          nameStr.includes(q) ||
-          idStr.includes(q) ||
-          rawIdStr.includes(q) ||
-          (cleanCode && idStr.includes(cleanCode)) ||
-          religionStr.includes(q) ||
-          casteStr.includes(q) ||
-          countryStr.includes(q) ||
-          cityStr.includes(q) ||
-          stateStr.includes(q) ||
-          locationStr.includes(q) ||
-          careerStr.includes(q) ||
-          maritalStr.includes(q) ||
-          motherTongueStr.includes(q) ||
-          ageStr === q;
-
-        if (!matches) return false;
-      }
-
-      return true;
+      if (!hasQuery) return true;
+      return memberMatchesSearch(m, searchQuery, lookupMaps);
     });
-  }, [members, ignoredMap, searchQuery, lookupMaps]);
+  }, [
+    members,
+    searchPool,
+    searchPoolKey,
+    appliedFilters,
+    ignoredMap,
+    searchQuery,
+    lookupMaps,
+  ]);
 
   // Handle Page Change with smooth scroll to top and server fetch
   const handlePageChange = async (newPage) => {
@@ -1247,64 +1329,20 @@ export default function ActiveMembersScreen() {
   ]);
 
   // Search Query change
+  // Search Query change (filters instantly; full list loads in background)
   const handleSearchChange = (text) => {
     setSearchQuery(text);
-    if (
-      !text &&
-      (appliedFilters.member_code ||
-        appliedFilters.name ||
-        appliedFilters.search)
-    ) {
-      const nextFilters = { ...appliedFilters };
-      delete nextFilters.member_code;
-      delete nextFilters.name;
-      delete nextFilters.search;
-      setAppliedFilters(nextFilters);
-      fetchMembersPage(1, nextFilters, true);
-    }
   };
 
-  // Search Submit on Keyboard
-  const handleSearchSubmit = async () => {
+  // Keyboard "search" just closes the keyboard (results are already live)
+  const handleSearchSubmit = () => {
     Keyboard.dismiss();
-    const q = searchQuery.trim();
-    if (!q) return;
-
-    const cleanedCode = q.replace(/^hm-?/i, "");
-    const newFilters = { ...appliedFilters };
-
-    if (/^\d+$/.test(cleanedCode)) {
-      newFilters.member_code = cleanedCode;
-      delete newFilters.name;
-      delete newFilters.search;
-    } else {
-      delete newFilters.member_code;
-      newFilters.name = q;
-      newFilters.search = q;
-    }
-
-    setAppliedFilters(newFilters);
-    scrollRef.current?.scrollTo({ y: 0, animated: true });
-    await fetchMembersPage(1, newFilters, true);
   };
 
   // Clear search
-  const handleClearSearch = async () => {
+  const handleClearSearch = () => {
     Keyboard.dismiss();
     setSearchQuery("");
-    if (
-      appliedFilters.member_code ||
-      appliedFilters.name ||
-      appliedFilters.search
-    ) {
-      const nextFilters = { ...appliedFilters };
-      delete nextFilters.member_code;
-      delete nextFilters.name;
-      delete nextFilters.search;
-      setAppliedFilters(nextFilters);
-      scrollRef.current?.scrollTo({ y: 0, animated: true });
-      await fetchMembersPage(1, nextFilters, true);
-    }
   };
 
   // Apply Filter & Send Payload to POST /api/member/member-listing?page=1
@@ -1919,6 +1957,15 @@ export default function ActiveMembersScreen() {
           </View>
         )}
 
+        {searchQuery.trim() && searchPoolLoading && (
+          <View style={styles.pageLoadingBox}>
+            <ActivityIndicator size="small" color={COLORS.primary} />
+            <Text style={styles.pageLoadingText}>
+              Searching all profiles...
+            </Text>
+          </View>
+        )}
+
         {/* Page Loading Banner */}
         {pageLoading && (
           <View style={styles.pageLoadingBox}>
@@ -1935,7 +1982,8 @@ export default function ActiveMembersScreen() {
         ) : filteredMembers.length === 0 &&
           !fetchError &&
           !emailUnverified &&
-          token ? (
+          token &&
+          !(searchQuery.trim() && searchPoolLoading) ? (
           /* Clean Empty State */
           <View style={styles.emptyContainer}>
             <View style={styles.emptyIconCircle}>
@@ -2042,7 +2090,14 @@ export default function ActiveMembersScreen() {
                   style={styles.photoContainer}
                 >
                   <Image
-                    source={{ uri: m.photo || DEFAULT_AVATAR }}
+                    source={{
+                      uri:
+                        m?.photo &&
+                        typeof m.photo === "string" &&
+                        m.photo.trim().length > 0
+                          ? m.photo.trim()
+                          : DEFAULT_AVATAR,
+                    }}
                     style={styles.cardPhoto}
                     resizeMode="cover"
                   />
@@ -2300,143 +2355,141 @@ export default function ActiveMembersScreen() {
         )}
 
         {/* ---------- RESPONSIVE PAGINATION CONTROLS (SERVER-SIDE) ---------- */}
-        {!loading &&
-          !searchQuery.trim() &&
-          totalPages > 1 && (
-            <View style={styles.paginationCard}>
-              {/* Page info subtitle */}
-              <Text style={styles.paginationInfoText}>
-                Showing{" "}
-                <Text style={styles.paginationInfoBold}>
-                  {totalItems === 0 || filteredMembers.length === 0
-                    ? 0
-                    : (currentPage - 1) * perPage + 1}
-                  –
-                  {totalItems === 0 || filteredMembers.length === 0
-                    ? 0
-                    : Math.min(
-                        (currentPage - 1) * perPage + filteredMembers.length,
-                        totalItems || currentPage * perPage,
-                      )}
-                </Text>{" "}
-                of{" "}
-                <Text style={styles.paginationInfoBold}>
-                  {totalItems || filteredMembers.length}
-                </Text>{" "}
-                profiles (Page {currentPage} of {totalPages})
-              </Text>
+        {!loading && !searchQuery.trim() && totalPages > 1 && (
+          <View style={styles.paginationCard}>
+            {/* Page info subtitle */}
+            <Text style={styles.paginationInfoText}>
+              Showing{" "}
+              <Text style={styles.paginationInfoBold}>
+                {totalItems === 0 || filteredMembers.length === 0
+                  ? 0
+                  : (currentPage - 1) * perPage + 1}
+                –
+                {totalItems === 0 || filteredMembers.length === 0
+                  ? 0
+                  : Math.min(
+                      (currentPage - 1) * perPage + filteredMembers.length,
+                      totalItems || currentPage * perPage,
+                    )}
+              </Text>{" "}
+              of{" "}
+              <Text style={styles.paginationInfoBold}>
+                {totalItems || filteredMembers.length}
+              </Text>{" "}
+              profiles (Page {currentPage} of {totalPages})
+            </Text>
 
-              {/* Centered Pagination Row */}
-              <View style={styles.paginationRow}>
-                {/* Previous Button */}
-                <TouchableOpacity
+            {/* Centered Pagination Row */}
+            <View style={styles.paginationRow}>
+              {/* Previous Button */}
+              <TouchableOpacity
+                style={[
+                  styles.navPageBtn,
+                  (currentPage === 1 || pageLoading) &&
+                    styles.navPageBtnDisabled,
+                ]}
+                onPress={() => handlePageChange(currentPage - 1)}
+                disabled={currentPage === 1 || pageLoading}
+                activeOpacity={0.7}
+              >
+                <Ionicons
+                  name="chevron-back"
+                  size={14}
+                  color={
+                    currentPage === 1 || pageLoading ? "#CBD5E1" : COLORS.text
+                  }
+                />
+                <Text
                   style={[
-                    styles.navPageBtn,
+                    styles.navPageBtnText,
                     (currentPage === 1 || pageLoading) &&
-                      styles.navPageBtnDisabled,
+                      styles.navPageBtnTextDisabled,
                   ]}
-                  onPress={() => handlePageChange(currentPage - 1)}
-                  disabled={currentPage === 1 || pageLoading}
-                  activeOpacity={0.7}
                 >
-                  <Ionicons
-                    name="chevron-back"
-                    size={14}
-                    color={
-                      currentPage === 1 || pageLoading ? "#CBD5E1" : COLORS.text
-                    }
-                  />
-                  <Text
-                    style={[
-                      styles.navPageBtnText,
-                      (currentPage === 1 || pageLoading) &&
-                        styles.navPageBtnTextDisabled,
-                    ]}
-                  >
-                    Prev
-                  </Text>
-                </TouchableOpacity>
+                  Prev
+                </Text>
+              </TouchableOpacity>
 
-                {/* Numbers & Ellipses */}
-                <View style={styles.pagePillsGroup}>
-                  {getPaginationRange(currentPage, totalPages).map((p, idx) => {
-                    if (p === "...") {
-                      const isLeftEllipsis = idx === 1;
-                      const targetPage = isLeftEllipsis
-                        ? Math.max(1, currentPage - 5)
-                        : Math.min(totalPages, currentPage + 5);
-                      return (
-                        <TouchableOpacity
-                          key={`ellipsis_${idx}`}
-                          style={styles.ellipsisWrap}
-                          onPress={() => handlePageChange(targetPage)}
-                          disabled={pageLoading}
-                          activeOpacity={0.6}
-                        >
-                          <Text style={styles.ellipsisText}>•••</Text>
-                        </TouchableOpacity>
-                      );
-                    }
-
-                    const isCurrent = p === currentPage;
+              {/* Numbers & Ellipses */}
+              <View style={styles.pagePillsGroup}>
+                {getPaginationRange(currentPage, totalPages).map((p, idx) => {
+                  if (p === "...") {
+                    const isLeftEllipsis = idx === 1;
+                    const targetPage = isLeftEllipsis
+                      ? Math.max(1, currentPage - 5)
+                      : Math.min(totalPages, currentPage + 5);
                     return (
                       <TouchableOpacity
-                        key={`page_${p}`}
-                        style={[
-                          styles.pageNumberBtn,
-                          isCurrent && styles.pageNumberBtnActive,
-                          pageLoading && styles.pageNumberBtnLoading,
-                        ]}
-                        onPress={() => handlePageChange(p)}
-                        disabled={pageLoading || isCurrent}
-                        activeOpacity={0.7}
+                        key={`ellipsis_${idx}`}
+                        style={styles.ellipsisWrap}
+                        onPress={() => handlePageChange(targetPage)}
+                        disabled={pageLoading}
+                        activeOpacity={0.6}
                       >
-                        <Text
-                          style={[
-                            styles.pageNumberText,
-                            isCurrent && styles.pageNumberTextActive,
-                          ]}
-                        >
-                          {p}
-                        </Text>
+                        <Text style={styles.ellipsisText}>•••</Text>
                       </TouchableOpacity>
                     );
-                  })}
-                </View>
+                  }
 
-                {/* Next Button */}
-                <TouchableOpacity
-                  style={[
-                    styles.navPageBtn,
-                    (currentPage === totalPages || pageLoading) &&
-                      styles.navPageBtnDisabled,
-                  ]}
-                  onPress={() => handlePageChange(currentPage + 1)}
-                  disabled={currentPage === totalPages || pageLoading}
-                  activeOpacity={0.7}
-                >
-                  <Text
-                    style={[
-                      styles.navPageBtnText,
-                      (currentPage === totalPages || pageLoading) &&
-                        styles.navPageBtnTextDisabled,
-                    ]}
-                  >
-                    Next
-                  </Text>
-                  <Ionicons
-                    name="chevron-forward"
-                    size={14}
-                    color={
-                      currentPage === totalPages || pageLoading
-                        ? "#CBD5E1"
-                        : COLORS.text
-                    }
-                  />
-                </TouchableOpacity>
+                  const isCurrent = p === currentPage;
+                  return (
+                    <TouchableOpacity
+                      key={`page_${p}`}
+                      style={[
+                        styles.pageNumberBtn,
+                        isCurrent && styles.pageNumberBtnActive,
+                        pageLoading && styles.pageNumberBtnLoading,
+                      ]}
+                      onPress={() => handlePageChange(p)}
+                      disabled={pageLoading || isCurrent}
+                      activeOpacity={0.7}
+                    >
+                      <Text
+                        style={[
+                          styles.pageNumberText,
+                          isCurrent && styles.pageNumberTextActive,
+                        ]}
+                      >
+                        {p}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
               </View>
+
+              {/* Next Button */}
+              <TouchableOpacity
+                style={[
+                  styles.navPageBtn,
+                  (currentPage === totalPages || pageLoading) &&
+                    styles.navPageBtnDisabled,
+                ]}
+                onPress={() => handlePageChange(currentPage + 1)}
+                disabled={currentPage === totalPages || pageLoading}
+                activeOpacity={0.7}
+              >
+                <Text
+                  style={[
+                    styles.navPageBtnText,
+                    (currentPage === totalPages || pageLoading) &&
+                      styles.navPageBtnTextDisabled,
+                  ]}
+                >
+                  Next
+                </Text>
+                <Ionicons
+                  name="chevron-forward"
+                  size={14}
+                  color={
+                    currentPage === totalPages || pageLoading
+                      ? "#CBD5E1"
+                      : COLORS.text
+                  }
+                />
+              </TouchableOpacity>
             </View>
-          )}
+          </View>
+        )}
       </KeyboardAwareScrollView>
 
       {/* ---------- COMPREHENSIVE SEARCH & FILTER MODAL ---------- */}

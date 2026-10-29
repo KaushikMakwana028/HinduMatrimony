@@ -28,7 +28,11 @@ const API_CONFIG = {
         MEMBER_INTRODUCTION_UPDATE: '/member/introduction-update',
         MEMBER_BASIC_INFO_UPDATE: '/member/basic-info/update',
         MEMBER_ADDRESS_UPDATE: '/member/address/update',
+        MEMBER_EDUCATION: '/member/education',
+        MEMBER_EDUCATION_DETAIL: (id) => `/member/education/${id}`,
         MEMBER_EDUCATION_STATUS_UPDATE: '/member/education-status/update',
+        MEMBER_CAREER: '/member/career',
+        MEMBER_CAREER_DETAIL: (id) => `/member/career/${id}`,
         MEMBER_CAREER_STATUS_UPDATE: '/member/career-status/update',
         MEMBER_PHYSICAL_ATTRIBUTES_UPDATE: '/member/physical-attributes/update',
         MEMBER_LANGUAGE_UPDATE: '/member/language/update',
@@ -59,5 +63,6 @@ const API_CONFIG = {
 export const BASE_URL = API_CONFIG.BASE_URL;
 export const TIMEOUT = API_CONFIG.TIMEOUT;
 export const ENDPOINTS = API_CONFIG.ENDPOINTS;
+export const DEMO_TOKEN = 'eyJpdiI6Ikp5RXlzL1FNZm1pYjE3L0VSdWdiRlE9PSIsInZhbHVlIjoiS0FvUzNPNFMxUnVoblVVWkZhRHovQT09IiwibWFjIjoiMjYyZGVkOWI1NGUwZDM0MDgyNTAzNTk2OWRlNDgyOTQ2NDU2ZTMwZTNmOGYxYzg4MTRhMDA2NThiODMyZjE1NiIsInRhZyI6IiJ9';
 
 export default API_CONFIG;
